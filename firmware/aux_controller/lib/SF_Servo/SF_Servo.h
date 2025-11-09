@@ -55,8 +55,9 @@ class SF_Servo
     void init();
     void enable();
     void disable();
-    void setAngle(uint8_t num, uint16_t val);
-    void setAngleRange(uint8_t min, uint8_t max);
+    void setAngle(uint8_t num, uint16_t angle);
+    void setAngleRange(uint16_t min, uint16_t max);
+    void setPluseRange(uint16_t min, uint16_t max);
     void setPWMFreq(float freq);
     void setPin(uint8_t num, uint16_t val, bool invert = false);
     void setPWM(uint8_t num, uint16_t on, uint16_t off);
@@ -64,10 +65,12 @@ class SF_Servo
     void sleep();
     void wakeup();
       
-  
+
   private:
-    uint8_t _min;
-    uint8_t _max;
+    uint16_t angleMin,angleMax;
+    uint16_t pluseMin, pluseMax;
+    uint16_t angleRange, pluseRange;
+    uint8_t freq;
     float cal_min;
     float cal_max;
 

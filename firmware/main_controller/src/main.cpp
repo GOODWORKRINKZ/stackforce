@@ -185,24 +185,23 @@ void inverseKinematicsAll() {
     servoBackRightFront = servoFrontRightFront;
     servoBackRightRear = servoFrontRightRear;
 
-    // Установка ВСЕХ 8 серво одной функцией
-    servos.setEightServoAngle(
-        SERVO_FL_FRONT, servoFrontLeftFront,  SERVO_FL_FRONT_OFFSET,
-        SERVO_FL_REAR,  servoFrontLeftRear,   SERVO_FL_REAR_OFFSET,
-        SERVO_FR_FRONT, servoFrontRightFront, SERVO_FR_FRONT_OFFSET,
-        SERVO_FR_REAR,  servoFrontRightRear,  SERVO_FR_REAR_OFFSET,
-        SERVO_BL_FRONT, servoBackLeftFront,   SERVO_BL_FRONT_OFFSET,
-        SERVO_BL_REAR,  servoBackLeftRear,    SERVO_BL_REAR_OFFSET,
-        SERVO_BR_FRONT, servoBackRightFront,  SERVO_BR_FRONT_OFFSET,
-        SERVO_BR_REAR,  servoBackRightRear,   SERVO_BR_REAR_OFFSET
-    );
+    // Установка ВСЕХ 8 серво (по одному)
+    servos.setAngle(SERVO_FL_FRONT, servoFrontLeftFront + SERVO_FL_FRONT_OFFSET);
+    servos.setAngle(SERVO_FL_REAR,  servoFrontLeftRear  + SERVO_FL_REAR_OFFSET);
+    servos.setAngle(SERVO_FR_FRONT, servoFrontRightFront + SERVO_FR_FRONT_OFFSET);
+    servos.setAngle(SERVO_FR_REAR,  servoFrontRightRear  + SERVO_FR_REAR_OFFSET);
+    servos.setAngle(SERVO_BL_FRONT, servoBackLeftFront   + SERVO_BL_FRONT_OFFSET);
+    servos.setAngle(SERVO_BL_REAR,  servoBackLeftRear    + SERVO_BL_REAR_OFFSET);
+    servos.setAngle(SERVO_BR_FRONT, servoBackRightFront  + SERVO_BR_FRONT_OFFSET);
+    servos.setAngle(SERVO_BR_REAR,  servoBackRightRear   + SERVO_BR_REAR_OFFSET);
 }
+
 
 /**
  * @brief Инициализация CAN шины
  */
 void setupCAN() {
-    CAN_cfg.speed = CAN_SPEED_1MBPS;
+    CAN_cfg.speed = CAN_SPEED_1000KBPS;  // 1 Mbps
     CAN_cfg.tx_pin_id = (gpio_num_t)CAN_TX_PIN;
     CAN_cfg.rx_pin_id = (gpio_num_t)CAN_RX_PIN;
     CAN_cfg.rx_queue = xQueueCreate(10, sizeof(CAN_frame_t));
@@ -242,7 +241,6 @@ void sendToAux() {
     ESP32Can.CANWriteFrame(&tx_frame);
     lastSend = millis();
 }
-    }
 
 /**
  * @brief Настройка (инициализация)
@@ -272,32 +270,24 @@ void setup() {
     
     // Инициализация серво
     servos.init();
-    // Установка начальной позиции ВСЕХ ног (стоя на высоте 90мм)
-    // Передние ноги
-    IKParam.XLeft = 0;
-    IKParam.XRight = 0;
-    IKParam.YLeft = 90;
-    IKParam.YRight = 90;
+    servos.setAngleRange(0, 300);
+    servos.setPluseRange(500, 2500);
+    Serial.println("[MAIN] Сервоприводы (PCA9685) инициализированы");
     
-    // Задние ноги
-    IKParamRear.XLeft = 0;
-    IKParamRear.XRight = 0;
-    IKParamRear.YLeft = 90;
-    IKParamRear.YRight = 90;
-    
-    inverseKinematicsAll();
+    // Инициализация BLDC моторов
+    motors.init();
     motors.setModes(4, 4);  // Режим управления скоростью
     Serial.println("[MAIN] BLDC моторы инициализированы");
     
     // Инициализация CAN
     setupCAN();
     
-    // Установка начальной позиции ног (стоя на высоте 90мм)
+    // Установка начальной позиции ВСЕХ ног (стоя на высоте 90мм)
     IKParam.XLeft = 0;
     IKParam.XRight = 0;
     IKParam.YLeft = 90;
     IKParam.YRight = 90;
-    inverseKinematics();
+    inverseKinematicsAll();
     
     Serial.println("[MAIN] Инициализация завершена!\n");
     Serial.println("Управление:");
@@ -341,7 +331,13 @@ void loop() {
     // PID для достижения целевой скорости -> целевой угол наклона
     float targetAngle = PID_VEL(targetSpeed - speedAvg);
     
-    // PID для компенсации поворота
+    // PID для стабилизации тангажа -> крутящий момент моторов
+    float torque = PID_PITCH(targetAngle - robotPose.pitch);
+    
+    // Применение поворота
+    float turnTorque = robotMotion.turn * turnKp;
+    motors.setTargets(M0Dir * (torque + turnTorque), M1Dir * (torque - turnTorque));
+    
     // === 4. Обратная кинематика для управления ВСЕМИ ногами ===
     
     // Компенсация X по скорости (чем быстрее едем, тем больше наклон ноги)
@@ -357,28 +353,14 @@ void loop() {
     float L_Height = Y + stab_roll;
     float R_Height = Y - stab_roll;
     
-    // Установка координат для передних ног
+    // Установка координат для ВСЕХ ног (передние и задние одинаковые)
     IKParam.XLeft = X;
     IKParam.XRight = X;
     IKParam.YLeft = L_Height;
     IKParam.YRight = R_Height;
     
-    // Задние ноги синхронизированы с передними
-    IKParamRear.XLeft = X;
-    IKParamRear.XRight = X;
-    IKParamRear.YLeft = L_Height;
-    IKParamRear.YRight = R_Height;
-    
-    // Вычисление и применение углов ВСЕХ серво
+    // Вычисление и применение углов ВСЕХ 8 серво
     inverseKinematicsAll();
-    // Установка координат для обратной кинематики
-    IKParam.XLeft = X;
-    IKParam.XRight = X;
-    IKParam.YLeft = L_Height;
-    IKParam.YRight = R_Height;
-    
-    // Вычисление и применение углов серво
-    inverseKinematics();
 
     // === 5. Отправка данных aux контроллеру ===
     sendToAux();
@@ -387,7 +369,7 @@ void loop() {
     loopCnt++;
     if (loopCnt >= 100) {
         Serial.printf("Status: Spd=%.1f Pitch=%.1f Roll=%.1f TgtAngle=%.1f Torque=%.1f Y=%.1f\n",
-                     speedAvg, robotPose.pitch, robotPose.roll, targetAngle, torque1, Y);
+                     speedAvg, robotPose.pitch, robotPose.roll, targetAngle, torque, Y);
         loopCnt = 0;
     }
     

@@ -1,13 +1,13 @@
 #include "SF_Servo.h"
 
 SF_Servo::SF_Servo(TwoWire &i2c)
-    :  _i2c(&i2c) {}
+    :  _i2c(&i2c), freq(50){}
 
 void SF_Servo::init(){
     _i2c->begin();
     reset();
 
-    setPWMFreq(50);
+    setPWMFreq(freq);
 
     enable();
 }
@@ -63,17 +63,30 @@ void SF_Servo::wakeup(){
   writeToPCA(PCA9685_MODE1, wakeup);
 }
 
-void SF_Servo::setAngle(uint8_t num, uint16_t val){
-    uint16_t angle = (int)map(val, _min, _max, cal_min / 20 * 4095, cal_max / 20 * 4095);  //比例放大范围在0~4096
-    setPWM(num, 0, angle);
+void SF_Servo::setAngle(uint8_t num, uint16_t angle){
+    if(angle < angleMin || angle > angleMax)
+        return;
+    uint16_t offTime = (int)(pluseMin + pluseRange * angle / angleRange);
+    uint16_t off = (int)(offTime * 4096 / 20000);
+    // Serial.printf("%d,%d,%d,%d,,%d,%d\n",angleRange,pluseRange,offTime,off,num,off);
+    setPWM(num, 0, off);
 }
 
-void SF_Servo::setAngleRange(uint8_t min, uint8_t max){
-    _min = min;
-    _max = max;
+void SF_Servo::setAngleRange(uint16_t min, uint16_t max){
+    angleMin = (max > min) ? min : max;
+    angleMax = (max > min) ? max : min;
+    // angleMin = min;
+    // angleMax = max;
+    angleRange = angleMax - angleMin;
+}
 
-    cal_min = 0.5/45 * min +0.5;
-    cal_max = 0.5/45 * max +0.5;
+void SF_Servo::setPluseRange(uint16_t min, uint16_t max){
+    pluseMin = (max > min) ? min : max;
+    pluseMax = (max > min) ? max : min;
+    // pluseMin = min;
+    // pluseMax = max;
+    pluseRange = pluseMax - pluseMin;
+
 }
 
 void SF_Servo::setPWM(uint8_t num, uint16_t on, uint16_t off){
