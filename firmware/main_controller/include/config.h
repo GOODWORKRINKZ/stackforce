@@ -37,16 +37,16 @@
 #define JOYSTICK_DEADZONE 5           // Дедзона джойстика (%)
 
 // ==================== CAN ШИНА ====================
+// Используется CAN/RS485 модуль StackForce
+// CANTX -> IO35, CANRX -> IO41
 
-#define CAN_TX_PIN 5
-#define CAN_RX_PIN 4
+#define CAN_TX_PIN 35
+#define CAN_RX_PIN 41
 #define CAN_SPEED CAN_SPEED_1MBPS
 
 // CAN ID сообщений
-#define CAN_ID_HEAD_TO_REAR 0x110     // Команды от головы к задней части
-#define CAN_ID_REAR_TO_HEAD 0x120     // Телеметрия от задней части
-#define CAN_ID_MOTOR_FL 0x141         // Передний левый BLDC
-#define CAN_ID_MOTOR_FR 0x142         // Передний правый BLDC
+#define CAN_ID_MAIN_TO_AUX 0x100      // Команды от main к aux контроллеру
+#define CAN_ID_AUX_TO_MAIN 0x101      // Телеметрия от aux к main
 
 // ==================== I2C УСТРОЙСТВА ====================
 

@@ -110,6 +110,29 @@ L5 = 40mm   (смещение по X)
 - Platform: Espressif32
 - Board: esp32-s3-devkitc-1
 
+### Железо
+
+**CAN коммуникация:**
+- Модуль CAN/RS485 от StackForce
+- CANTX -> GPIO35
+- CANRX -> GPIO41
+- Скорость: 1 Mbps
+
+**BLDC моторы:**
+- Управление через Serial2 (GPIO17 RX, GPIO18 TX)
+- Main: M0, M1 (передние колеса)
+- Aux: M2, M3 (задние колеса)
+
+**Сервоприводы:**
+- Все 8 серво на main контроллере
+- PCA9685 @ I2C 0x40 (SDA=GPIO1, SCL=GPIO2)
+
+**IMU:**
+- MPU6050 @ I2C 0x68 (те же I2C пины)
+
+**SBUS приемник:**
+- GPIO16 (Serial1 RX)
+
 ### Примеры использования
 
 Основаны на:
