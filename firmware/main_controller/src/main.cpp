@@ -20,8 +20,7 @@
 #include "pid.h"
 #include "sbus.h"
 #include "quadrupedal_data.h"
-#include <ESP32CAN.h>
-#include <CAN_config.h>
+#include "driver/twai.h"
 #include "config.h"
 
 // ==================== ГЛОБАЛЬНЫЕ ОБЪЕКТЫ ====================
@@ -30,7 +29,7 @@ SF_IMU mpu6050 = SF_IMU(Wire);              // MPU6050 IMU
 SF_BLDC motors = SF_BLDC(Serial2);          // BLDC моторы
 bfs::SbusRx sbusRx(&Serial1);               // SBUS приемник
 
-CAN_device_t CAN_cfg;                       // CAN конфигурация
+static bool twai_installed = false;         // Флаг инициализации TWAI
 
 // ==================== PID КОНТРОЛЛЕРЫ ====================
 PIDController PID_VEL{0.2, 0, 0, 1000, 50};     // PID для скорости
@@ -201,44 +200,69 @@ void inverseKinematicsAll() {
  * @brief Инициализация CAN шины
  */
 void setupCAN() {
-    CAN_cfg.speed = CAN_SPEED_1000KBPS;  // 1 Mbps
-    CAN_cfg.tx_pin_id = (gpio_num_t)CAN_TX_PIN;
-    CAN_cfg.rx_pin_id = (gpio_num_t)CAN_RX_PIN;
-    CAN_cfg.rx_queue = xQueueCreate(10, sizeof(CAN_frame_t));
+    // Конфигурация TWAI
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(
+        (gpio_num_t)CAN_TX_PIN, 
+        (gpio_num_t)CAN_RX_PIN, 
+        TWAI_MODE_NORMAL
+    );
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();  // 1 Mbps
+    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
     
-    ESP32Can.CANInit();
-    Serial.println("[MAIN] CAN инициализирован (1 Mbps)");
+    // Установка драйвера
+    if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
+        Serial.println("[MAIN] TWAI driver установлен");
+    } else {
+        Serial.println("[MAIN] ОШИБКА: Не удалось установить TWAI driver");
+        return;
+    }
+    
+    // Запуск драйвера
+    if (twai_start() == ESP_OK) {
+        Serial.println("[MAIN] TWAI запущен (1 Mbps)");
+        twai_installed = true;
+    } else {
+        Serial.println("[MAIN] ОШИБКА: Не удалось запустить TWAI");
+        return;
+    }
 }
 
 /**
  * @brief Отправка команд aux контроллеру по CAN
  */
 void sendToAux() {
+    if (!twai_installed) return;
+    
     static unsigned long lastSend = 0;
     if (millis() - lastSend < 20) return;  // 50 Hz
     
-    CAN_frame_t tx_frame;
-    tx_frame.MsgID = CAN_ID_MAIN_TO_AUX;
-    tx_frame.FIR.B.FF = CAN_frame_std;
-    tx_frame.FIR.B.DLC = 8;
+    // Создание TWAI сообщения
+    twai_message_t tx_msg;
+    tx_msg.identifier = CAN_ID_MAIN_TO_AUX;
+    tx_msg.data_length_code = 8;
+    tx_msg.flags = 0;  // Standard frame, data frame
     
     // Упаковка данных для aux контроллера
     int8_t throttle = (int8_t)constrain(targetSpeed, -100, 100);
     int8_t turn = (int8_t)constrain(robotMotion.turn * 10, -100, 100);
     
-    tx_frame.data.u8[0] = throttle + 100;  // 0..200
-    tx_frame.data.u8[1] = turn + 100;      // 0..200
-    tx_frame.data.u8[2] = (uint8_t)Y_demand;  // Высота
-    tx_frame.data.u8[3] = 0;  // Резерв
+    tx_msg.data[0] = throttle + 100;  // 0..200
+    tx_msg.data[1] = turn + 100;      // 0..200
+    tx_msg.data[2] = (uint8_t)Y_demand;  // Высота
+    tx_msg.data[3] = 0;  // Резерв
     
     int16_t roll_int = (int16_t)(robotPose.roll * 10);
     int16_t pitch_int = (int16_t)(robotPose.pitch * 10);
-    tx_frame.data.u8[4] = (roll_int >> 8) & 0xFF;
-    tx_frame.data.u8[5] = roll_int & 0xFF;
-    tx_frame.data.u8[6] = (pitch_int >> 8) & 0xFF;
-    tx_frame.data.u8[7] = pitch_int & 0xFF;
+    tx_msg.data[4] = (roll_int >> 8) & 0xFF;
+    tx_msg.data[5] = roll_int & 0xFF;
+    tx_msg.data[6] = (pitch_int >> 8) & 0xFF;
+    tx_msg.data[7] = pitch_int & 0xFF;
     
-    ESP32Can.CANWriteFrame(&tx_frame);
+    // Отправка сообщения
+    if (twai_transmit(&tx_msg, pdMS_TO_TICKS(10)) != ESP_OK) {
+        Serial.println("[MAIN] TWAI: Ошибка отправки");
+    }
+    
     lastSend = millis();
 }
 
