@@ -1,249 +1,404 @@
-/**
- * @file main.cpp
- * @brief Вспомогательный (aux) контроллер задней части робота
- * 
- * Функции:
- * - Управление задними 2 BLDC моторами
- * - Управление задними 4 сервоприводами (2 ноги)
- * - Прием команд от main контроллера по CAN
- * - Синхронизация с main
- */
+/**/**
 
-#include <Arduino.h>
-#include <Wire.h>
-#include <ESP32CAN.h>
-#include <CAN_config.h>
-#include <Adafruit_PWMServoDriver.h>
-#include "config.h"
+ * @file main.cpp * @file main.cpp
 
-// Объекты
-CAN_device_t CAN_cfg;
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDR);
+ * @brief Вспомогательный контроллер (Aux Controller) - управление задними моторами * @brief Aux контроллер (задняя часть - только управление задними моторами)
 
-// Структура команды от main контроллера
-struct RobotCommand {
+ * @version 2.0 * 
+
+ * @date 2024-01 * Функции:
+
+ *  * - Прием команд от main контроллера по CAN
+
+ * Функционал: * - Управление 2 задними BLDC моторами (колеса)
+
+ * - Прием команд от main контроллера по CAN шине * - Все 8 сервоприводов управляются main контроллером
+
+ * - Управление задними BLDC моторами (M2, M3) */
+
+ * - Все 8 серво управляются main контроллером
+
+ * #include <Arduino.h>
+
+ * Hardware:#include <Wire.h>
+
+ * - ESP32-S3 DevKit#include <ESP32CAN.h>
+
+ * - 2x BLDC мотора (задние колеса)#include <CAN_config.h>
+
+ * - CAN трансивер#include "SF_BLDC.h"
+
+ */#include "config.h"
+
+
+
+#include <Arduino.h>// ==================== ГЛОБАЛЬНЫЕ ОБЪЕКТЫ ====================
+
+#include <ESP32CAN.h>CAN_device_t CAN_cfg;
+
+#include <CAN_config.h>SF_BLDC motors = SF_BLDC(Serial2);     // Задние BLDC моторы
+
+#include "SF_BLDC.h"
+
+#include "config.h"// Направления задних моторов
+
+int M2Dir = 1;   // Задний левый
+
+// ==================== БИБЛИОТЕКИ ====================int M3Dir = -1;  // Задний правый
+
+
+
+SF_BLDC motors;// ==================== СТРУКТУРА КОМАНДЫ ОТ MAIN ====================
+
+CAN_device_t CAN_cfg;struct RobotCommand {
+
     int8_t throttle;      // -100..100
-    int8_t steering;      // -100..100
-    uint8_t mode;         // 0..255
-    uint8_t speed;        // 0..255
-    float roll;           // IMU крен
-    float pitch;          // IMU тангаж
-} __attribute__((packed));
 
-RobotCommand robotCmd = {0, 0, 128, 128, 0.0, 0.0};
+// ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================    int8_t turn;          // -100..100
 
-// Текущие скорости задних моторов
+    uint8_t height;       // Высота ног (не используется, только для информации)
+
+struct RobotCommand {    uint8_t reserved;
+
+    float throttle;   // -100...100    float roll;           // Крен от IMU main
+
+    float turn;       // -100...100      float pitch;          // Тангаж от IMU main
+
+    uint8_t height;   // 0...255} __attribute__((packed));
+
+    uint8_t reserved;
+
+    float roll;       // градусыRobotCommand robotCmd = {0, 0, 90, 0, 0.0, 0.0};
+
+    float pitch;      // градусы
+
+};// Текущие скорости задних моторов
+
 int16_t motorSpeedBL = 0;
-int16_t motorSpeedBR = 0;
 
-// Углы задних сервоприводов
-uint8_t servoAngles[4] = {90, 90, 90, 90};
+RobotCommand robotCmd = {0, 0, 120, 0, 0, 0};int16_t motorSpeedBR = 0;
 
-// Время обновления
-unsigned long lastCommandTime = 0;
+
+
+float motorSpeedBL = 0;  // Back Left (M2)// Время последнего получения команды
+
+float motorSpeedBR = 0;  // Back Right (M3)unsigned long lastCommandTime = 0;
+
 unsigned long lastControlTime = 0;
 
+unsigned long lastCommandTime = 0;
+
+unsigned long lastControlTime = 0;uint8_t loopCnt = 0;
+
+uint8_t loopCnt = 0;
+
+// ==================== ФУНКЦИИ ====================
+
+// ==================== ФУНКЦИИ ====================
+
 /**
- * @brief Инициализация CAN
- */
-void setupCAN() {
-    CAN_cfg.speed = CAN_SPEED;
-    CAN_cfg.tx_pin_id = (gpio_num_t)CAN_TX_PIN;
-    CAN_cfg.rx_pin_id = (gpio_num_t)CAN_RX_PIN;
-    CAN_cfg.rx_queue = xQueueCreate(10, sizeof(CAN_frame_t));
-    
-    ESP32Can.CANInit();
-    Serial.println("[AUX] CAN инициализирован (1 Mbps)");
+
+/** * @brief Инициализация CAN
+
+ * @brief Инициализация CAN */
+
+ */void setupCAN() {
+
+void setupCAN() {    CAN_cfg.speed = CAN_SPEED_1MBPS;
+
+    CAN_cfg.speed = CAN_SPEED_1MBPS;    CAN_cfg.tx_pin_id = (gpio_num_t)CAN_TX_PIN;
+
+    CAN_cfg.tx_pin_id = (gpio_num_t)CAN_TX_PIN;    CAN_cfg.rx_pin_id = (gpio_num_t)CAN_RX_PIN;
+
+    CAN_cfg.rx_pin_id = (gpio_num_t)CAN_RX_PIN;    CAN_cfg.rx_queue = xQueueCreate(10, sizeof(CAN_frame_t));
+
+    CAN_cfg.rx_queue = xQueueCreate(10, sizeof(CAN_frame_t));    
+
+        ESP32Can.CANInit();
+
+    ESP32Can.CANInit();    Serial.println("[AUX] CAN инициализирован (1 Mbps)");
+
+    Serial.println("[AUX] CAN инициализирован (1 Mbps)");}
+
 }
 
 /**
- * @brief Инициализация PCA9685 и сервоприводов
- */
-void setupServos() {
-    pwm.begin();
-    pwm.setPWMFreq(SERVO_FREQ);
-    
-    // Установка начальной позиции
-    for (int i = 0; i < 4; i++) {
-        setServoAngle(i, 90);
-    }
-    
-    Serial.println("[AUX] Сервоприводы инициализированы");
+
+/** * @brief Чтение команд от main контроллера по CAN
+
+ * @brief Чтение команд от main контроллера по CAN */
+
+ */void readCANCommands() {
+
+void readCANCommands() {    CAN_frame_t rx_frame;
+
+    CAN_frame_t rx_frame;    
+
+        while (CAN_OK == ESP32Can.CANReadFrame(&rx_frame)) {
+
+    while (CAN_OK == ESP32Can.CANReadFrame(&rx_frame)) {        if (rx_frame.MsgID == CAN_ID_MAIN_TO_AUX && rx_frame.FIR.B.DLC >= 8) {
+
+        if (rx_frame.MsgID == CAN_ID_MAIN_TO_AUX && rx_frame.FIR.B.DLC >= 8) {            // Распаковка команды
+
+            // Распаковка команды            robotCmd.throttle = (int8_t)(rx_frame.data.u8[0]) - 100;
+
+            robotCmd.throttle = (int8_t)(rx_frame.data.u8[0]) - 100;            robotCmd.turn = (int8_t)(rx_frame.data.u8[1]) - 100;
+
+            robotCmd.turn = (int8_t)(rx_frame.data.u8[1]) - 100;            robotCmd.height = rx_frame.data.u8[2];
+
+            robotCmd.height = rx_frame.data.u8[2];            robotCmd.reserved = rx_frame.data.u8[3];
+
+            robotCmd.reserved = rx_frame.data.u8[3];            
+
+                        int16_t roll_int = (rx_frame.data.u8[4] << 8) | rx_frame.data.u8[5];
+
+            int16_t roll_int = (rx_frame.data.u8[4] << 8) | rx_frame.data.u8[5];            int16_t pitch_int = (rx_frame.data.u8[6] << 8) | rx_frame.data.u8[7];
+
+            int16_t pitch_int = (rx_frame.data.u8[6] << 8) | rx_frame.data.u8[7];            robotCmd.roll = roll_int / 10.0;
+
+            robotCmd.roll = roll_int / 10.0;            robotCmd.pitch = pitch_int / 10.0;
+
+            robotCmd.pitch = pitch_int / 10.0;            
+
+                        lastCommandTime = millis();
+
+            lastCommandTime = millis();        }
+
+        }    }
+
+    }}
+
 }
 
 /**
- * @brief Установка угла сервопривода
- */
-void setServoAngle(uint8_t channel, uint8_t angle) {
-    angle = constrain(angle, 0, 180);
-    uint16_t pulse = map(angle, 0, 180, SERVO_MIN_PULSE, SERVO_MAX_PULSE);
-    pwm.setPWM(channel, 0, pulse);
-    servoAngles[channel] = angle;
-}
 
-/**
- * @brief Отправка команды на BLDC мотор
- */
-void setMotorSpeed(uint16_t motorId, int16_t speed) {
-    speed = constrain(speed, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
-    
-    CAN_frame_t tx_frame;
-    tx_frame.MsgID = motorId;
-    tx_frame.FIR.B.FF = CAN_frame_std;
-    tx_frame.FIR.B.DLC = 8;
-    
-    tx_frame.data.u8[0] = 0x01;  // Команда: установить скорость
-    tx_frame.data.u8[1] = (speed >> 8) & 0xFF;
-    tx_frame.data.u8[2] = speed & 0xFF;
-    tx_frame.data.u8[3] = 0x00;
-    tx_frame.data.u8[4] = 0x00;
-    tx_frame.data.u8[5] = 0x00;
-    tx_frame.data.u8[6] = 0x00;
-    tx_frame.data.u8[7] = 0x00;
-    
-    ESP32Can.CANWriteFrame(&tx_frame);
-}
+/** * @brief Управление задними моторами
 
-/**
- * @brief Чтение команд от main контроллера
- */
-void readCANCommands() {
-    CAN_frame_t rx_frame;
-    
-    while (CAN_OK == ESP32Can.CANReadFrame(&rx_frame)) {
-        if (rx_frame.MsgID == CAN_ID_MAIN_TO_AUX && rx_frame.FIR.B.DLC >= 8) {
-            // Распаковка команды
-            robotCmd.throttle = (int8_t)(rx_frame.data.u8[0]) - 100;
-            robotCmd.steering = (int8_t)(rx_frame.data.u8[1]) - 100;
-            robotCmd.mode = rx_frame.data.u8[2];
-            robotCmd.speed = rx_frame.data.u8[3];
-            
-            int16_t roll_int = (rx_frame.data.u8[4] << 8) | rx_frame.data.u8[5];
-            int16_t pitch_int = (rx_frame.data.u8[6] << 8) | rx_frame.data.u8[7];
-            robotCmd.roll = roll_int / 10.0;
-            robotCmd.pitch = pitch_int / 10.0;
-            
-            lastCommandTime = millis();
-            digitalWrite(LED_CAN_PIN, !digitalRead(LED_CAN_PIN));
-        }
-    }
-}
+ * @brief Управление задними моторами */
 
-/**
- * @brief Управление задними моторами и сервоприводами
- */
-void controlRearLegs() {
-    if (millis() - lastControlTime < (1000 / CONTROL_LOOP_FREQ)) return;
-    
-    // Проверка таймаута команд
-    if (millis() - lastCommandTime > 1000) {
-        // Аварийная остановка
-        motorSpeedBL = 0;
-        motorSpeedBR = 0;
-        setMotorSpeed(CAN_ID_MOTOR_BL, 0);
-        setMotorSpeed(CAN_ID_MOTOR_BR, 0);
+ */void controlRearMotors() {
+
+void controlRearMotors() {    if (millis() - lastControlTime < 20) return;  // 50 Hz
+
+    if (millis() - lastControlTime < 20) return;  // 50 Hz    
+
+        // Проверка таймаута команд
+
+    // Проверка таймаута команд    if (millis() - lastCommandTime > 500) {
+
+    if (millis() - lastCommandTime > 500) {        // Аварийная остановка при потере связи
+
+        // Аварийная остановка при потере связи        motorSpeedBL = 0;
+
+        motorSpeedBL = 0;        motorSpeedBR = 0;
+
+        motorSpeedBR = 0;        motors.setTargets(0, 0);
+
+        motors.setTargets(0, 0);        lastControlTime = millis();
+
+        lastControlTime = millis();        return;
+
+        return;    }
+
+    }    
+
+        // Вычисление крутящих моментов для задних моторов
+
+    // Вычисление крутящих моментов для задних моторов    float torque = robotCmd.throttle * 0.1;
+
+    float torque = robotCmd.throttle * 0.1;    float turnTorque = robotCmd.turn * 0.1;
+
+    float turnTorque = robotCmd.turn * 0.1;    
+
+        float torque1 = torque + turnTorque;
+
+    float torque1 = torque + turnTorque;    float torque2 = torque - turnTorque;
+
+    float torque2 = torque - turnTorque;    
+
+        motors.setTargets(M2Dir * torque1, M3Dir * torque2);
+
+    motors.setTargets(M2Dir * torque1, M3Dir * torque2);    
+
         lastControlTime = millis();
-        return;
-    }
-    
-    // Вычисление скоростей моторов
-    float speedMult = robotCmd.speed / 255.0;
-    int16_t baseSpeed = map(robotCmd.throttle, -100, 100, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
-    int16_t turnOffset = map(robotCmd.steering, -100, 100, -1000, 1000);
-    
-    motorSpeedBL = (baseSpeed - turnOffset) * speedMult;
-    motorSpeedBR = (baseSpeed + turnOffset) * speedMult;
-    
-    setMotorSpeed(CAN_ID_MOTOR_BL, motorSpeedBL);
-    setMotorSpeed(CAN_ID_MOTOR_BR, motorSpeedBR);
-    
-    // Управление высотой стойки задних ног
-    uint8_t legAngle = map(robotCmd.mode, 0, 255, 60, 120);
-    setServoAngle(SERVO_BL_HIP, legAngle);
-    setServoAngle(SERVO_BR_HIP, legAngle);
-    
-    lastControlTime = millis();
+
+    lastControlTime = millis();}
+
+}            robotCmd.throttle = (int8_t)(rx_frame.data.u8[0]) - 100;
+
+            robotCmd.turn = (int8_t)(rx_frame.data.u8[1]) - 100;
+
+// ==================== SETUP ====================            robotCmd.height = rx_frame.data.u8[2];
+
+            robotCmd.reserved = rx_frame.data.u8[3];
+
+void setup() {            
+
+    Serial.begin(115200);            int16_t roll_int = (rx_frame.data.u8[4] << 8) | rx_frame.data.u8[5];
+
+    delay(1000);            int16_t pitch_int = (rx_frame.data.u8[6] << 8) | rx_frame.data.u8[7];
+
+                robotCmd.roll = roll_int / 10.0;
+
+    Serial.println("\n\n[AUX] Запуск вспомогательного контроллера...");            robotCmd.pitch = pitch_int / 10.0;
+
+    Serial.println("[AUX] Версия: 2.0");            
+
+    Serial.println("[AUX] Функции: только задние моторы M2, M3");            lastCommandTime = millis();
+
+            }
+
+    // Инициализация BLDC моторов    }
+
+    Serial2.begin(115200, SERIAL_8N1, 17, 18);}
+
+    motors.init(&Serial2);
+
+    delay(100);/**
+
+    Serial.println("[AUX] BLDC моторы инициализированы"); * @brief Управление задними моторами
+
+     */
+
+    // Инициализация CANvoid controlRearMotors() {
+
+    setupCAN();    if (millis() - lastControlTime < 20) return;  // 50 Hz
+
+        
+
+    Serial.println("[AUX] Инициализация завершена!");    // Проверка таймаута команд
+
+    Serial.println("[AUX] Ожидание команд по CAN...");    if (millis() - lastCommandTime > 500) {
+
+}        // Аварийная остановка при потере связи
+
+        motorSpeedBL = 0;
+
+// ==================== LOOP ====================        motorSpeedBR = 0;
+
+        motors.setTargets(0, 0);
+
+void loop() {        lastControlTime = millis();
+
+    loopCnt++;        return;
+
+        }
+
+    // Чтение команд по CAN    
+
+    readCANCommands();    // Вычисление крутящих моментов для задних моторов
+
+        // Используем ту же логику что и main контроллер
+
+    // Управление задними моторами    float torque = robotCmd.throttle * 0.1;  // Простая пропорция
+
+    controlRearMotors();    float turnTorque = robotCmd.turn * 0.1;
+
+        
+
+    // Отладочная информация каждые 50 циклов    float torque1 = torque + turnTorque;
+
+    if (loopCnt % 50 == 0) {    float torque2 = torque - turnTorque;
+
+        Serial.printf("[AUX] Команды: throttle=%.1f turn=%.1f | Моторы: M2=%.1f M3=%.1f\n",    
+
+            robotCmd.throttle, robotCmd.turn, motorSpeedBL, motorSpeedBR);    motors.setTargets(M2Dir * torque1, M3Dir * torque2);
+
+    }    
+
+        lastControlTime = millis();
+
+    delay(5);  // ~200 Hz}
+
 }
 
 /**
- * @brief Отправка телеметрии main контроллеру
+ * @brief Управление задними сервоприводами
  */
-void sendTelemetry() {
-    static unsigned long lastSend = 0;
-    if (millis() - lastSend < 100) return;  // 10 Hz
+/**
+ * @brief Управление задними сервоприводами
+ */
+void controlRearServos() {
+    // Синхронизация с main - те же координаты X, Y
+    // В идеале main должен передавать X и Y, но пока используем высоту
     
-    CAN_frame_t tx_frame;
-    tx_frame.MsgID = CAN_ID_AUX_TO_MAIN;
-    tx_frame.FIR.B.FF = CAN_frame_std;
-    tx_frame.FIR.B.DLC = 8;
+    IKParam.XLeft = 0;    // Базовая позиция
+    IKParam.XRight = 0;
+    IKParam.YLeft = robotCmd.height;
+    IKParam.YRight = robotCmd.height;
     
-    tx_frame.data.u8[0] = 0x01;  // Статус: OK
-    tx_frame.data.u8[1] = (motorSpeedBL >> 8) & 0xFF;
-    tx_frame.data.u8[2] = motorSpeedBL & 0xFF;
-    tx_frame.data.u8[3] = (motorSpeedBR >> 8) & 0xFF;
-    tx_frame.data.u8[4] = motorSpeedBR & 0xFF;
-    tx_frame.data.u8[5] = servoAngles[SERVO_BL_HIP];
-    tx_frame.data.u8[6] = servoAngles[SERVO_BR_HIP];
-    tx_frame.data.u8[7] = 0x00;
-    
-    ESP32Can.CANWriteFrame(&tx_frame);
-    lastSend = millis();
+    inverseKinematics();
 }
 
 /**
- * @brief Вывод отладочной информации
+ * @brief Настройка (инициализация)
  */
-void printDebug() {
-    static unsigned long lastPrint = 0;
-    if (millis() - lastPrint < 500) return;
-    
-    Serial.printf("[AUX] Cmd: T=%d S=%d M=%d | Motors: BL=%d BR=%d | IMU: R=%.1f P=%.1f\n",
-                 robotCmd.throttle, robotCmd.steering, robotCmd.mode,
-                 motorSpeedBL, motorSpeedBR, robotCmd.roll, robotCmd.pitch);
-    
-    lastPrint = millis();
-}
-
 void setup() {
-    Serial.begin(115200);
-    delay(1000);
+    Serial.begin(921600);
+    delay(500);
     
     Serial.println("\n========================================");
     Serial.println("  AUX КОНТРОЛЛЕР (Задняя часть)");
-    Serial.println("  ESP32");
+    Serial.println("  ESP32 + BLDC + Servo (синхронизация)");
     Serial.println("========================================\n");
     
-    // Инициализация пинов
-    pinMode(LED_STATUS_PIN, OUTPUT);
-    pinMode(LED_CAN_PIN, OUTPUT);
+    // Инициализация I2C (для PCA9685)
+    Wire.begin(1, 2, 400000UL);
     
-    digitalWrite(LED_STATUS_PIN, HIGH);
+    // Инициализация Serial2 для BLDC (RX=17, TX=18)
+    Serial2.begin(115200, SERIAL_8N1, 17, 18);
     
-    // Инициализация I2C
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ);
+    // Инициализация серво
+    servos.init();
+    servos.setAngleRange(0, 300);
+    servos.setPluseRange(500, 2500);
+    Serial.println("[AUX] Сервоприводы (PCA9685) инициализированы");
     
-    // Инициализация подсистем
+    // Инициализация BLDC моторов
+    motors.init();
+    motors.setModes(4, 4);  // Режим управления скоростью
+    Serial.println("[AUX] BLDC моторы инициализированы");
+    
+    // Инициализация CAN
     setupCAN();
-    setupServos();
     
-    Serial.println("[AUX] Инициализация завершена\n");
-    Serial.println("[AUX] Ожидание команд от main контроллера...\n");
+    // Установка начальной позиции задних ног (стоя на 90мм)
+    IKParam.XLeft = 0;
+    IKParam.XRight = 0;
+    IKParam.YLeft = 90;
+    IKParam.YRight = 90;
+    inverseKinematics();
+    
+    Serial.println("[AUX] Инициализация завершена!\n");
+    Serial.println("[AUX] Ожидание команд от main контроллера по CAN...\n");
     
     lastCommandTime = millis();
+    delay(1000);
 }
 
+/**
+ * @brief Основной цикл
+ */
 void loop() {
+    // === 1. Чтение команд от main по CAN ===
     readCANCommands();
-    controlRearLegs();
-    sendTelemetry();
-    printDebug();
     
-    // Мигание статуса
-    static unsigned long lastBlink = 0;
-    if (millis() - lastBlink > 500) {
-        digitalWrite(LED_STATUS_PIN, !digitalRead(LED_STATUS_PIN));
-        lastBlink = millis();
+    // === 2. Управление задними моторами ===
+    controlRearMotors();
+    
+    // === 3. Управление задними сервоприводами ===
+    controlRearServos();
+    
+    // === 4. Отладочная информация ===
+    loopCnt++;
+    if (loopCnt >= 100) {
+        Serial.printf("[AUX] Cmd: Thr=%d Turn=%d H=%d | Roll=%.1f Pitch=%.1f | Status: %s\n",
+                     robotCmd.throttle, robotCmd.turn, robotCmd.height,
+                     robotCmd.roll, robotCmd.pitch,
+                     (millis() - lastCommandTime > 500) ? "LOST" : "OK");
+        loopCnt = 0;
     }
     
-    delay(5);
+    delay(5);  // ~200Hz цикл
 }
+

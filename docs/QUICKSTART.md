@@ -1,4 +1,31 @@
-# Быстрый старт - 5 минут до первого запуска
+# Быстрый старт - StackForce Firmware v2.0
+
+## Архитектура
+
+**Main Controller (Голова):**
+- Управляет ВСЕМИ 8 сервоприводами (4 ноги)
+- Читает SBUS пульт + MPU6050 IMU
+- Управляет передними моторами M0, M1
+- Отправляет команды по CAN
+
+**Aux Controller (Хвост):**
+- Управляет ТОЛЬКО задними моторами M2, M3
+- Читает команды по CAN от main
+- НЕ управляет сервоприводами
+
+## Mapping сервоприводов
+
+Все 8 серво подключены к PCA9685 на main контроллере:
+
+```
+Передние ноги:
+  Front Left:  SERVO_FL_FRONT = 3, SERVO_FL_REAR = 4
+  Front Right: SERVO_FR_FRONT = 2, SERVO_FR_REAR = 1
+
+Задние ноги:
+  Back Left:   SERVO_BL_FRONT = 7, SERVO_BL_REAR = 8
+  Back Right:  SERVO_BR_FRONT = 6, SERVO_BR_REAR = 5
+```
 
 ## Необходимое оборудование
 

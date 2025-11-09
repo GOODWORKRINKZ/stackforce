@@ -1,362 +1,395 @@
 /**
  * @file main.cpp
- * @brief Голова робота (передняя часть) - ESP32 с PPM приемником
+ * @brief Main контроллер четырехногого колесного робота
  * 
  * Функции:
- * - Прием PPM от RC приемника
- * - Управление передними 2 BLDC моторами
- * - Управление передними 4 сервоприводами (2 ноги)
+ * - Прием SBUS от RC приемника
+ * - Управление 2 передними BLDC моторами (M0, M1)
+ * - Управление ВСЕХ 8 сервоприводов (4 ноги с 5-звенным механизмом)
  * - Чтение IMU (MPU6050)
- * - Отправка команд задней части по CAN
+ * - Обратная кинематика для управления всеми 4 ногами
+ * - PID стабилизация (pitch, roll, скорость)
+ * - Отправка команд aux контроллеру по CAN
  */
 
 #include <Arduino.h>
 #include <Wire.h>
+#include "SF_Servo.h"
+#include "SF_BLDC.h"
+#include "SF_IMU.h"
+#include "pid.h"
+#include "sbus.h"
+#include "quadrupedal_data.h"
 #include <ESP32CAN.h>
 #include <CAN_config.h>
-#include <Adafruit_PWMServoDriver.h>
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
 #include "config.h"
 
-// Объекты
-CAN_device_t CAN_cfg;
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDR);
-Adafruit_MPU6050 mpu;
+// ==================== ГЛОБАЛЬНЫЕ ОБЪЕКТЫ ====================
+SF_Servo servos = SF_Servo(Wire);           // PCA9685 драйвер серво
+SF_IMU mpu6050 = SF_IMU(Wire);              // MPU6050 IMU
+SF_BLDC motors = SF_BLDC(Serial2);          // BLDC моторы
+bfs::SbusRx sbusRx(&Serial1);               // SBUS приемник
 
-// PPM данные
-volatile uint16_t ppmChannels[PPM_CHANNELS];
-volatile uint8_t ppmChannelIndex = 0;
-volatile uint32_t ppmLastPulseTime = 0;
-volatile bool ppmFrameReady = false;
+CAN_device_t CAN_cfg;                       // CAN конфигурация
 
-// Структура команды управления для отправки задней части
-struct RobotCommand {
-    int8_t throttle;      // -100..100
-    int8_t steering;      // -100..100
-    uint8_t mode;         // 0..255
-    uint8_t speed;        // 0..255
-    float roll;           // IMU крен
-    float pitch;          // IMU тангаж
-} __attribute__((packed));
+// ==================== PID КОНТРОЛЛЕРЫ ====================
+PIDController PID_VEL{0.2, 0, 0, 1000, 50};     // PID для скорости
+PIDController PID_PITCH{0.38, 0, 0, 1000, 50};  // PID для тангажа (pitch)
+PIDController PID_ROLL{0.05, 0, 0, 1000, 50};   // PID для крена (roll)
 
-RobotCommand robotCmd = {0, 0, 128, 128, 0.0, 0.0};
+// ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
+int RCValue[6] = {1000, 1000, 1000, 1000, 1000, 1000};  // RC каналы
+std::array<int16_t, bfs::SbusRx::NUM_CH()> sbusData;
 
-// Текущие скорости передних моторов
-int16_t motorSpeedFL = 0;
-int16_t motorSpeedFR = 0;
+robotposeparam robotPose;      // Текущая поза робота (IMU)
+robotmotionparam robotMotion;  // Команды движения
+IKparam IKParam;               // Параметры обратной кинематики
+SF_BLDC_DATA BLDCData;         // Данные от BLDC моторов
 
-// Углы передних сервоприводов
-uint8_t servoAngles[4] = {90, 90, 90, 90};
+// Направления моторов (-1 или 1)
+int M0Dir = 1;
+int M1Dir = -1;
 
-// IMU данные
-float imuRoll = 0, imuPitch = 0, imuYaw = 0;
+// Параметры управления
+float X = 0, Y = 90;              // Координаты конца ноги (X, Y в мм)
+float Y_demand = 90;              // Желаемая высота ноги
+float Kp_Y = 0.1;                 // Коэффициент для плавного изменения высоты
+float Kp_X = 1.1;                 // Коэффициент для компенсации скорости по X
+float Kp_roll = 0.05;             // Коэффициент для адаптации к неровностям
+float turnKp = 0.1;               // Коэффициент поворота
 
-// Время обновления
-unsigned long lastPPMTime = 0;
-unsigned long lastIMUTime = 0;
-unsigned long lastControlTime = 0;
+float targetSpeed = 0;            // Целевая скорость
+float stab_roll = 0;              // Накопленная коррекция крена
+float rollLimit = 20;             // Максимальный крен (градусы)
+float L = 100;                    // Расстояние между ногами (мм)
+
+uint8_t lowest = ROBOT_LOWEST_FOR_MOT;
+uint8_t highest = ROBOT_HIGHEST;
+
+uint8_t loopCnt = 0;
+
+// Углы серво (для всех 8 серво)
+uint16_t servoFrontLeftFront = 90, servoFrontLeftRear = 90;
+uint16_t servoFrontRightFront = 90, servoFrontRightRear = 90;
+uint16_t servoBackLeftFront = 90, servoBackLeftRear = 90;
+uint16_t servoBackRightFront = 90, servoBackRightRear = 90;
+
+
+// ==================== ФУНКЦИИ ====================
 
 /**
- * @brief Обработчик прерывания PPM
+ * @brief Чтение значений с SBUS приемника
  */
-void IRAM_ATTR ppmInterrupt() {
-    uint32_t currentTime = micros();
-    uint32_t pulseDuration = currentTime - ppmLastPulseTime;
-    ppmLastPulseTime = currentTime;
+void getRCValue() {
+    if (sbusRx.Read()) {
+        sbusData = sbusRx.ch();
+        RCValue[0] = sbusData[0];
+        RCValue[1] = sbusData[1];
+        RCValue[2] = sbusData[2];
+        RCValue[3] = sbusData[3];
+        RCValue[4] = sbusData[4];
+        RCValue[5] = sbusData[5];
 
-    if (pulseDuration > 3000) {
-        ppmChannelIndex = 0;
-        ppmFrameReady = true;
-    } 
-    else if (ppmChannelIndex < PPM_CHANNELS) {
-        ppmChannels[ppmChannelIndex] = pulseDuration;
-        ppmChannelIndex++;
+        // Ограничение значений
+        RCValue[0] = _constrain(RCValue[0], RCCHANNEL_MIN, RCCHANNEL_MAX);
+        RCValue[1] = _constrain(RCValue[1], RCCHANNEL_MIN, RCCHANNEL_MAX);
+        RCValue[2] = _constrain(RCValue[2], RCCHANNEL3_MIN, RCCHANNEL3_MAX);
+        RCValue[3] = _constrain(RCValue[3], RCCHANNEL_MIN, RCCHANNEL_MAX);
     }
 }
 
 /**
- * @brief Инициализация CAN
+ * @brief Получение данных MPU6050
+ */
+void getMPUValue() {
+    mpu6050.update();
+    // Внимание: из-за ориентации датчика оси могут быть инвертированы
+    robotPose.pitch = -mpu6050.angle[0];
+    robotPose.roll = mpu6050.angle[1];
+    robotPose.yaw = mpu6050.angle[2];
+    robotPose.GyroX = mpu6050.gyro[1];
+    robotPose.GyroY = -mpu6050.gyro[0];
+    robotPose.GyroZ = -mpu6050.gyro[2];
+}
+
+/**
+ * @brief Обратная кинематика для 5-звенного механизма
+ * Вычисляет углы для ВСЕХ 4 ног (передние и задние) и устанавливает серво
+ */
+void inverseKinematicsAll() {
+    int16_t alphaLeftToAngle, betaLeftToAngle;
+    int16_t alphaRightToAngle, betaRightToAngle;
+    
+    // ========== ПЕРЕДНИЕ НОГИ ==========
+    float alpha1, alpha2, beta1, beta2;
+
+    // === ЛЕВАЯ ПЕРЕДНЯЯ НОГА ===
+    float aLeft = 2 * IKParam.XLeft * L1;
+    float bLeft = 2 * IKParam.YLeft * L1;
+    float cLeft = IKParam.XLeft * IKParam.XLeft + IKParam.YLeft * IKParam.YLeft + L1 * L1 - L2 * L2;
+    float dLeft = 2 * L4 * (IKParam.XLeft - L5);
+    float eLeft = 2 * L4 * IKParam.YLeft;
+    float fLeft = ((IKParam.XLeft - L5) * (IKParam.XLeft - L5) + L4 * L4 + IKParam.YLeft * IKParam.YLeft - L3 * L3);
+
+    alpha1 = 2 * atan((bLeft + sqrt((aLeft * aLeft) + (bLeft * bLeft) - (cLeft * cLeft))) / (aLeft + cLeft));
+    alpha2 = 2 * atan((bLeft - sqrt((aLeft * aLeft) + (bLeft * bLeft) - (cLeft * cLeft))) / (aLeft + cLeft));
+    beta1 = 2 * atan((eLeft + sqrt((dLeft * dLeft) + eLeft * eLeft - (fLeft * fLeft))) / (dLeft + fLeft));
+    beta2 = 2 * atan((eLeft - sqrt((dLeft * dLeft) + eLeft * eLeft - (fLeft * fLeft))) / (dLeft + fLeft));
+
+    alpha1 = (alpha1 >= 0) ? alpha1 : (alpha1 + 2 * PI);
+    alpha2 = (alpha2 >= 0) ? alpha2 : (alpha2 + 2 * PI);
+
+    if (alpha1 >= PI / 4) IKParam.alphaLeft = alpha1;
+    else IKParam.alphaLeft = alpha2;
+    
+    if (beta1 >= 0 && beta1 <= PI / 4) IKParam.betaLeft = beta1;
+    else IKParam.betaLeft = beta2;
+
+    // === ПРАВАЯ ПЕРЕДНЯЯ НОГА ===
+    float aRight = 2 * IKParam.XRight * L1;
+    float bRight = 2 * IKParam.YRight * L1;
+    float cRight = IKParam.XRight * IKParam.XRight + IKParam.YRight * IKParam.YRight + L1 * L1 - L2 * L2;
+    float dRight = 2 * L4 * (IKParam.XRight - L5);
+    float eRight = 2 * L4 * IKParam.YRight;
+    float fRight = ((IKParam.XRight - L5) * (IKParam.XRight - L5) + L4 * L4 + IKParam.YRight * IKParam.YRight - L3 * L3);
+
+    alpha1 = 2 * atan((aRight + sqrt((aRight * aRight) + (bRight * bRight) - (cRight * cRight))) / (aRight + cRight));
+    alpha2 = 2 * atan((bRight - sqrt((aRight * aRight) + (bRight * bRight) - (cRight * cRight))) / (aRight + cRight));
+    beta1 = 2 * atan((eRight + sqrt((dRight * dRight) + eRight * eRight - (fRight * fRight))) / (dRight + fRight));
+    beta2 = 2 * atan((eRight - sqrt((dRight * dRight) + eRight * eRight - (fRight * fRight))) / (dRight + fRight));
+
+    alpha1 = (alpha1 >= 0) ? alpha1 : (alpha1 + 2 * PI);
+    alpha2 = (alpha2 >= 0) ? alpha2 : (alpha2 + 2 * PI);
+
+    if (alpha1 >= PI / 4) IKParam.alphaRight = alpha1;
+    else IKParam.alphaRight = alpha2;
+    
+    if (beta1 >= 0 && beta1 <= PI / 4) IKParam.betaRight = beta1;
+    else IKParam.betaRight = beta2;
+
+    // Конвертация в градусы для передних ног
+    alphaLeftToAngle = (int)((IKParam.alphaLeft / 6.28) * 360);
+    betaLeftToAngle = (int)((IKParam.betaLeft / 6.28) * 360);
+    alphaRightToAngle = (int)((IKParam.alphaRight / 6.28) * 360);
+    betaRightToAngle = (int)((IKParam.betaRight / 6.28) * 360);
+
+    // Применение смещений для передних ног
+    servoFrontLeftFront = 90 + betaLeftToAngle;
+    servoFrontLeftRear = 90 + alphaLeftToAngle;
+    servoFrontRightFront = 270 - betaRightToAngle;
+    servoFrontRightRear = 270 - alphaRightToAngle;
+
+    // Задние ноги - копируем те же углы (синхронизация)
+    servoBackLeftFront = servoFrontLeftFront;
+    servoBackLeftRear = servoFrontLeftRear;
+    servoBackRightFront = servoFrontRightFront;
+    servoBackRightRear = servoFrontRightRear;
+
+    // Установка ВСЕХ 8 серво одной функцией
+    servos.setEightServoAngle(
+        SERVO_FL_FRONT, servoFrontLeftFront,  SERVO_FL_FRONT_OFFSET,
+        SERVO_FL_REAR,  servoFrontLeftRear,   SERVO_FL_REAR_OFFSET,
+        SERVO_FR_FRONT, servoFrontRightFront, SERVO_FR_FRONT_OFFSET,
+        SERVO_FR_REAR,  servoFrontRightRear,  SERVO_FR_REAR_OFFSET,
+        SERVO_BL_FRONT, servoBackLeftFront,   SERVO_BL_FRONT_OFFSET,
+        SERVO_BL_REAR,  servoBackLeftRear,    SERVO_BL_REAR_OFFSET,
+        SERVO_BR_FRONT, servoBackRightFront,  SERVO_BR_FRONT_OFFSET,
+        SERVO_BR_REAR,  servoBackRightRear,   SERVO_BR_REAR_OFFSET
+    );
+}
+
+/**
+ * @brief Инициализация CAN шины
  */
 void setupCAN() {
-    CAN_cfg.speed = CAN_SPEED;
+    CAN_cfg.speed = CAN_SPEED_1MBPS;
     CAN_cfg.tx_pin_id = (gpio_num_t)CAN_TX_PIN;
     CAN_cfg.rx_pin_id = (gpio_num_t)CAN_RX_PIN;
     CAN_cfg.rx_queue = xQueueCreate(10, sizeof(CAN_frame_t));
     
     ESP32Can.CANInit();
-    Serial.println("[HEAD] CAN инициализирован (1 Mbps)");
+    Serial.println("[MAIN] CAN инициализирован (1 Mbps)");
 }
 
 /**
- * @brief Инициализация PCA9685 и сервоприводов
+ * @brief Отправка команд aux контроллеру по CAN
  */
-void setupServos() {
-    pwm.begin();
-    pwm.setPWMFreq(SERVO_FREQ);
-    
-    // Установка начальной позиции (стоя)
-    for (int i = 0; i < 4; i++) {
-        setServoAngle(i, 90);
-    }
-    
-    Serial.println("[HEAD] Сервоприводы инициализированы");
-}
-
-/**
- * @brief Инициализация IMU
- */
-void setupIMU() {
-    if (!mpu.begin(IMU_ADDR, &Wire, 0)) {
-        Serial.println("[HEAD] ОШИБКА: MPU6050 не найден!");
-        digitalWrite(LED_IMU_PIN, LOW);
-        return;
-    }
-    
-    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-    
-    digitalWrite(LED_IMU_PIN, HIGH);
-    Serial.println("[HEAD] IMU инициализирован");
-}
-
-/**
- * @brief Установка угла сервопривода
- */
-void setServoAngle(uint8_t channel, uint8_t angle) {
-    angle = constrain(angle, 0, 180);
-    uint16_t pulse = map(angle, 0, 180, SERVO_MIN_PULSE, SERVO_MAX_PULSE);
-    pwm.setPWM(channel, 0, pulse);
-    servoAngles[channel] = angle;
-}
-
-/**
- * @brief Отправка команды на BLDC мотор
- */
-void setMotorSpeed(uint16_t motorId, int16_t speed) {
-    speed = constrain(speed, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
-    
-    CAN_frame_t tx_frame;
-    tx_frame.MsgID = motorId;
-    tx_frame.FIR.B.FF = CAN_frame_std;
-    tx_frame.FIR.B.DLC = 8;
-    
-    tx_frame.data.u8[0] = 0x01;  // Команда: установить скорость
-    tx_frame.data.u8[1] = (speed >> 8) & 0xFF;
-    tx_frame.data.u8[2] = speed & 0xFF;
-    tx_frame.data.u8[3] = 0x00;
-    tx_frame.data.u8[4] = 0x00;
-    tx_frame.data.u8[5] = 0x00;
-    tx_frame.data.u8[6] = 0x00;
-    tx_frame.data.u8[7] = 0x00;
-    
-    ESP32Can.CANWriteFrame(&tx_frame);
-}
-
-/**
- * @brief Обработка PPM данных
- */
-void processPPM() {
-    if (!ppmFrameReady) return;
-    ppmFrameReady = false;
-
-    // Проверка валидности
-    bool valid = true;
-    for (int i = 0; i < 4; i++) {
-        if (ppmChannels[i] < 800 || ppmChannels[i] > 2200) {
-            valid = false;
-            break;
-        }
-    }
-
-    if (!valid) {
-        robotCmd.throttle = 0;
-        robotCmd.steering = 0;
-        digitalWrite(LED_PPM_PIN, LOW);
-        Serial.println("[HEAD] ПОТЕРЯ PPM СИГНАЛА!");
-        return;
-    }
-
-    digitalWrite(LED_PPM_PIN, HIGH);
-    lastPPMTime = millis();
-
-    // Маппинг каналов
-    int8_t throttle = map(ppmChannels[CH_THROTTLE], PPM_MIN_VALUE, PPM_MAX_VALUE, -100, 100);
-    int8_t steering = map(ppmChannels[CH_STEERING], PPM_MIN_VALUE, PPM_MAX_VALUE, -100, 100);
-    
-    if (abs(throttle) < JOYSTICK_DEADZONE) throttle = 0;
-    if (abs(steering) < JOYSTICK_DEADZONE) steering = 0;
-    
-    robotCmd.throttle = throttle;
-    robotCmd.steering = steering;
-    robotCmd.mode = map(ppmChannels[CH_MODE], PPM_MIN_VALUE, PPM_MAX_VALUE, 0, 255);
-    robotCmd.speed = map(ppmChannels[CH_SPEED], PPM_MIN_VALUE, PPM_MAX_VALUE, 0, 255);
-}
-
-/**
- * @brief Обработка IMU
- */
-void processIMU() {
-    if (millis() - lastIMUTime < (1000 / IMU_UPDATE_RATE)) return;
-    
-    sensors_event_t accel, gyro, temp;
-    mpu.getEvent(&accel, &gyro, &temp);
-    
-    // Углы из акселерометра
-    float accelRoll = atan2(accel.acceleration.y, accel.acceleration.z) * 180.0 / PI;
-    float accelPitch = atan2(-accel.acceleration.x, 
-                            sqrt(accel.acceleration.y * accel.acceleration.y + 
-                                 accel.acceleration.z * accel.acceleration.z)) * 180.0 / PI;
-    
-    // Интегрирование гироскопа
-    float dt = (millis() - lastIMUTime) / 1000.0;
-    static float gyroRoll = 0, gyroPitch = 0;
-    
-    gyroRoll += gyro.gyro.x * 180.0 / PI * dt;
-    gyroPitch += gyro.gyro.y * 180.0 / PI * dt;
-    imuYaw += gyro.gyro.z * 180.0 / PI * dt;
-    
-    // Комплементарный фильтр
-    imuRoll = IMU_FILTER_ALPHA * gyroRoll + (1.0 - IMU_FILTER_ALPHA) * accelRoll;
-    imuPitch = IMU_FILTER_ALPHA * gyroPitch + (1.0 - IMU_FILTER_ALPHA) * accelPitch;
-    
-    gyroRoll = imuRoll;
-    gyroPitch = imuPitch;
-    
-    robotCmd.roll = imuRoll;
-    robotCmd.pitch = imuPitch;
-    
-    lastIMUTime = millis();
-}
-
-/**
- * @brief Управление передними моторами и сервоприводами
- */
-void controlFrontLegs() {
-    if (millis() - lastControlTime < (1000 / CONTROL_LOOP_FREQ)) return;
-    
-    // Проверка таймаута PPM
-    if (millis() - lastPPMTime > PPM_TIMEOUT) {
-        motorSpeedFL = 0;
-        motorSpeedFR = 0;
-        setMotorSpeed(CAN_ID_MOTOR_FL, 0);
-        setMotorSpeed(CAN_ID_MOTOR_FR, 0);
-        lastControlTime = millis();
-        return;
-    }
-    
-    // Вычисление скоростей моторов
-    float speedMult = robotCmd.speed / 255.0;
-    int16_t baseSpeed = map(robotCmd.throttle, -100, 100, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
-    int16_t turnOffset = map(robotCmd.steering, -100, 100, -1000, 1000);
-    
-    motorSpeedFL = (baseSpeed - turnOffset) * speedMult;
-    motorSpeedFR = (baseSpeed + turnOffset) * speedMult;
-    
-    setMotorSpeed(CAN_ID_MOTOR_FL, motorSpeedFL);
-    setMotorSpeed(CAN_ID_MOTOR_FR, motorSpeedFR);
-    
-    // Управление высотой стойки
-    uint8_t legAngle = map(robotCmd.mode, 0, 255, 60, 120);
-    setServoAngle(SERVO_FL_HIP, legAngle);
-    setServoAngle(SERVO_FR_HIP, legAngle);
-    
-    lastControlTime = millis();
-}
-
-/**
- * @brief Отправка команд задней части
- */
-void sendToRear() {
+void sendToAux() {
     static unsigned long lastSend = 0;
     if (millis() - lastSend < 20) return;  // 50 Hz
     
     CAN_frame_t tx_frame;
-    tx_frame.MsgID = CAN_ID_HEAD_TO_REAR;
+    tx_frame.MsgID = CAN_ID_MAIN_TO_AUX;
     tx_frame.FIR.B.FF = CAN_frame_std;
     tx_frame.FIR.B.DLC = 8;
     
-    tx_frame.data.u8[0] = robotCmd.throttle + 100;  // 0..200
-    tx_frame.data.u8[1] = robotCmd.steering + 100;  // 0..200
-    tx_frame.data.u8[2] = robotCmd.mode;
-    tx_frame.data.u8[3] = robotCmd.speed;
+    // Упаковка данных для aux контроллера
+    int8_t throttle = (int8_t)constrain(targetSpeed, -100, 100);
+    int8_t turn = (int8_t)constrain(robotMotion.turn * 10, -100, 100);
     
-    int16_t roll_int = (int16_t)(robotCmd.roll * 10);
-    int16_t pitch_int = (int16_t)(robotCmd.pitch * 10);
+    tx_frame.data.u8[0] = throttle + 100;  // 0..200
+    tx_frame.data.u8[1] = turn + 100;      // 0..200
+    tx_frame.data.u8[2] = (uint8_t)Y_demand;  // Высота
+    tx_frame.data.u8[3] = 0;  // Резерв
+    
+    int16_t roll_int = (int16_t)(robotPose.roll * 10);
+    int16_t pitch_int = (int16_t)(robotPose.pitch * 10);
     tx_frame.data.u8[4] = (roll_int >> 8) & 0xFF;
     tx_frame.data.u8[5] = roll_int & 0xFF;
     tx_frame.data.u8[6] = (pitch_int >> 8) & 0xFF;
     tx_frame.data.u8[7] = pitch_int & 0xFF;
     
     ESP32Can.CANWriteFrame(&tx_frame);
-    
-    digitalWrite(LED_CAN_PIN, !digitalRead(LED_CAN_PIN));
     lastSend = millis();
+}
+    }
+
+/**
+ * @brief Настройка (инициализация)
+ */
+void setup() {
+    Serial.begin(921600);
+    delay(500);
+    
+    Serial.println("\n========================================");
+    Serial.println("  MAIN КОНТРОЛЛЕР (Двуногий робот)");
+    Serial.println("  ESP32 с SBUS + IMU + BLDC + Servo");
+    Serial.println("========================================\n");
+    
+    // Инициализация I2C (для IMU и PCA9685)
+    Wire.begin(1, 2, 400000UL);
+    
+    // Инициализация Serial2 для BLDC (RX=17, TX=18)
+    Serial2.begin(115200, SERIAL_8N1, 17, 18);
+    
+    // Инициализация SBUS (Serial1, RX=SBUSPIN)
+    sbusRx.Begin(SBUSPIN, -1);
+    Serial.printf("[MAIN] SBUS приемник на GPIO %d\n", SBUSPIN);
+    
+    // Инициализация IMU
+    mpu6050.init();
+    Serial.println("[MAIN] IMU (MPU6050) инициализирован");
+    
+    // Инициализация серво
+    servos.init();
+    // Установка начальной позиции ВСЕХ ног (стоя на высоте 90мм)
+    // Передние ноги
+    IKParam.XLeft = 0;
+    IKParam.XRight = 0;
+    IKParam.YLeft = 90;
+    IKParam.YRight = 90;
+    
+    // Задние ноги
+    IKParamRear.XLeft = 0;
+    IKParamRear.XRight = 0;
+    IKParamRear.YLeft = 90;
+    IKParamRear.YRight = 90;
+    
+    inverseKinematicsAll();
+    motors.setModes(4, 4);  // Режим управления скоростью
+    Serial.println("[MAIN] BLDC моторы инициализированы");
+    
+    // Инициализация CAN
+    setupCAN();
+    
+    // Установка начальной позиции ног (стоя на высоте 90мм)
+    IKParam.XLeft = 0;
+    IKParam.XRight = 0;
+    IKParam.YLeft = 90;
+    IKParam.YRight = 90;
+    inverseKinematics();
+    
+    Serial.println("[MAIN] Инициализация завершена!\n");
+    Serial.println("Управление:");
+    Serial.println("  - Канал 1 (Forward): Вперед/назад");
+    Serial.println("  - Канал 0 (Turn): Поворот");
+    Serial.println("  - Канал 2 (Height): Высота ног");
+    Serial.println("  - Канал 3 (Roll): Крен\n");
+    
+    delay(1000);
 }
 
 /**
- * @brief Вывод отладочной информации
+ * @brief Основной цикл
  */
-void printDebug() {
-    static unsigned long lastPrint = 0;
-    if (millis() - lastPrint < 500) return;
-    
-    Serial.printf("[HEAD] PPM: T=%d S=%d M=%d Sp=%d | Motors: FL=%d FR=%d | IMU: R=%.1f P=%.1f\n",
-                 robotCmd.throttle, robotCmd.steering, robotCmd.mode, robotCmd.speed,
-                 motorSpeedFL, motorSpeedFR, imuRoll, imuPitch);
-    
-    lastPrint = millis();
-}
-
-void setup() {
-    Serial.begin(115200);
-    delay(1000);
-    
-    Serial.println("\n========================================");
-    Serial.println("  ГОЛОВА РОБОТА (Передняя часть)");
-    Serial.println("  ESP32 с PPM приемником");
-    Serial.println("========================================\n");
-    
-    // Инициализация пинов
-    pinMode(PPM_INPUT_PIN, INPUT);
-    pinMode(LED_STATUS_PIN, OUTPUT);
-    pinMode(LED_PPM_PIN, OUTPUT);
-    pinMode(LED_CAN_PIN, OUTPUT);
-    pinMode(LED_IMU_PIN, OUTPUT);
-    
-    digitalWrite(LED_STATUS_PIN, HIGH);
-    
-    // Инициализация I2C
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ);
-    
-    // Инициализация подсистем
-    setupCAN();
-    setupServos();
-    setupIMU();
-    
-    // Настройка прерывания PPM
-    attachInterrupt(digitalPinToInterrupt(PPM_INPUT_PIN), ppmInterrupt, RISING);
-    Serial.printf("[HEAD] PPM приемник на GPIO %d\n", PPM_INPUT_PIN);
-    
-    Serial.println("[HEAD] Инициализация завершена\n");
-    
-    lastPPMTime = millis();
-}
-
 void loop() {
-    processPPM();
-    processIMU();
-    controlFrontLegs();
-    sendToRear();
-    printDebug();
+    // === 1. Чтение входных данных ===
+    getRCValue();           // SBUS приемник
+    getMPUValue();          // IMU датчик
+    BLDCData = motors.getBLDCData();  // Данные от BLDC
+
+    // === 2. Обработка команд управления ===
     
-    // Мигание статуса
-    static unsigned long lastBlink = 0;
-    if (millis() - lastBlink > 1000) {
-        digitalWrite(LED_STATUS_PIN, !digitalRead(LED_STATUS_PIN));
-        lastBlink = millis();
+    // Поворот (от RC канала 0)
+    robotMotion.turn = map(RCValue[RC_CH_TURN], RCCHANNEL_MIN, RCCHANNEL_MAX, -5, 5);
+    
+    // Целевая скорость (от RC канала 1)
+    targetSpeed = map(RCValue[RC_CH_FORWARD], RCCHANNEL_MIN, RCCHANNEL_MAX, -20, 20);
+    
+    // Желаемая высота ног (от RC канала 2)
+    Y_demand = (int)map(RCValue[RC_CH_HEIGHT], RCCHANNEL3_MIN, RCCHANNEL3_MAX, lowest, highest);
+    
+    // Желаемый крен (от RC канала 3) - для ручного управления балансом
+    float Phi = map(RCValue[RC_CH_ROLL], RCCHANNEL_MIN, RCCHANNEL_MAX, -1 * rollLimit, rollLimit);
+
+    // === 3. Управление BLDC моторами ===
+    
+    // Получение средней скорости колес
+    float speedAvg = (M0Dir * BLDCData.M0_Vel + M1Dir * BLDCData.M1_Vel) / 2.0;
+    robotPose.speedAvg = speedAvg;
+    
+    // PID для достижения целевой скорости -> целевой угол наклона
+    float targetAngle = PID_VEL(targetSpeed - speedAvg);
+    
+    // PID для компенсации поворота
+    // === 4. Обратная кинематика для управления ВСЕМИ ногами ===
+    
+    // Компенсация X по скорости (чем быстрее едем, тем больше наклон ноги)
+    X = -Kp_X * (targetSpeed - speedAvg);
+    
+    // Плавное изменение высоты Y
+    Y = Y + Kp_Y * (Y_demand - Y);
+    
+    // Адаптация к неровностям через PID по крену
+    stab_roll = stab_roll + Kp_roll * (0 - robotPose.roll);
+    
+    // Вычисление высоты для левой и правой ноги
+    float L_Height = Y + stab_roll;
+    float R_Height = Y - stab_roll;
+    
+    // Установка координат для передних ног
+    IKParam.XLeft = X;
+    IKParam.XRight = X;
+    IKParam.YLeft = L_Height;
+    IKParam.YRight = R_Height;
+    
+    // Задние ноги синхронизированы с передними
+    IKParamRear.XLeft = X;
+    IKParamRear.XRight = X;
+    IKParamRear.YLeft = L_Height;
+    IKParamRear.YRight = R_Height;
+    
+    // Вычисление и применение углов ВСЕХ серво
+    inverseKinematicsAll();
+    // Установка координат для обратной кинематики
+    IKParam.XLeft = X;
+    IKParam.XRight = X;
+    IKParam.YLeft = L_Height;
+    IKParam.YRight = R_Height;
+    
+    // Вычисление и применение углов серво
+    inverseKinematics();
+
+    // === 5. Отправка данных aux контроллеру ===
+    sendToAux();
+
+    // === 6. Отладочная информация ===
+    loopCnt++;
+    if (loopCnt >= 100) {
+        Serial.printf("Status: Spd=%.1f Pitch=%.1f Roll=%.1f TgtAngle=%.1f Torque=%.1f Y=%.1f\n",
+                     speedAvg, robotPose.pitch, robotPose.roll, targetAngle, torque1, Y);
+        loopCnt = 0;
     }
     
-    delay(5);
+    delay(5);  // ~200Hz цикл
 }
