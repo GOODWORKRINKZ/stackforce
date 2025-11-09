@@ -1,0 +1,5 @@
+adafruit/Adafruit PWM Servo Driver Library@^2.4.1
+adafruit/Adafruit MPU6050@^2.2.4
+miwagner/ESP32-Arduino-CAN@^1.0.1
+Wire
+adafruit/Adafruit Unified Sensor@^1.1.9

@@ -1,189 +1,129 @@
-/**
- * @file sbus.h
- * @brief Библиотека для декодирования SBUS протокола от RC приемника
- * 
- * Основано на библиотеке StackForce
- * SBUS - цифровой протокол от Futaba/FrSky
- * - 16 каналов
- * - Инвертированный UART на 100000 baud
- * - 25 байт пакет каждые ~9-14мс
- */
+/*
+* Brian R Taylor
+* brian.taylor@bolderflight.com
+* 
+* Copyright (c) 2021 Bolder Flight Systems Inc
+*
+* Permission is hereby granted, free of charge, to any person obtaining a copy
+* of this software and associated documentation files (the “Software”), to
+* deal in the Software without restriction, including without limitation the
+* rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+* sell copies of the Software, and to permit persons to whom the Software is
+* furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+* IN THE SOFTWARE.
+*/
 
-#ifndef SBUS_H
-#define SBUS_H
+#ifndef SRC_SBUS_H_
+#define SRC_SBUS_H_
 
+#if defined(ARDUINO)
 #include <Arduino.h>
+#else
+#include "core/core.h"
+#endif
+#include <cstddef>
+#include <cstdint>
+#include <cmath>
+#include <array>
 
-#define SBUS_SIGNAL_OK          0x00
-#define SBUS_SIGNAL_LOST        0x01
-#define SBUS_SIGNAL_FAILSAFE    0x02
+namespace bfs {
 
-class SBUS {
-public:
-    /**
-     * @brief Конструктор
-     * @param serial Ссылка на Serial порт (обычно Serial2)
-     */
-    SBUS(HardwareSerial &serial) : _serial(&serial) {
-        for (int i = 0; i < 16; i++) {
-            _channels[i] = 1024; // Центральное значение
-        }
-        _failsafe = false;
-        _lostFrame = false;
-        _goodFrames = 0;
-        _lostFrames = 0;
-    }
-    
-    /**
-     * @brief Инициализация SBUS приемника
-     * @param rxPin Пин RX (например 16)
-     * @param txPin Пин TX (не используется, но нужен для Serial, например 17)
-     * @param inverse true для инвертированного сигнала (обычно true для SBUS)
-     */
-    void begin(int8_t rxPin = -1, int8_t txPin = -1, bool inverse = true) {
-        // SBUS использует 100000 baud, 8E2 (8 бит данных, четность, 2 стоп-бита)
-        if (rxPin >= 0 && txPin >= 0) {
-            _serial->begin(100000, SERIAL_8E2, rxPin, txPin, inverse);
-        } else {
-            _serial->begin(100000, SERIAL_8E2);
-        }
-        Serial.println("[SBUS] Инициализирован (100000 baud, 8E2, inverted)");
-    }
-    
-    /**
-     * @brief Обновление данных (вызывать в loop)
-     * @return true если новый пакет получен
-     */
-    bool update() {
-        bool newData = false;
-        
-        while (_serial->available() > 0) {
-            uint8_t byte = _serial->read();
-            
-            if (_bufferIndex == 0 && byte != 0x0F) {
-                // Ждем стартовый байт
-                continue;
-            }
-            
-            _buffer[_bufferIndex++] = byte;
-            
-            if (_bufferIndex == 25) {
-                // Полный пакет получен
-                _bufferIndex = 0;
-                
-                if (_buffer[0] == 0x0F && _buffer[24] == 0x00) {
-                    // Валидный пакет
-                    parsePacket();
-                    newData = true;
-                    _goodFrames++;
-                    _lastUpdate = millis();
-                } else {
-                    _lostFrames++;
-                }
-            }
-        }
-        
-        // Проверка таймаута
-        if (millis() - _lastUpdate > 100) {
-            _lostFrame = true;
-        } else {
-            _lostFrame = false;
-        }
-        
-        return newData;
-    }
-    
-    /**
-     * @brief Получение значения канала
-     * @param channel Номер канала (0-15)
-     * @return Значение канала (172-1811, центр ~992)
-     */
-    uint16_t getChannel(uint8_t channel) {
-        if (channel < 16) {
-            return _channels[channel];
-        }
-        return 1024;
-    }
-    
-    /**
-     * @brief Получение нормализованного значения канала
-     * @param channel Номер канала (0-15)
-     * @return Значение от -100 до 100
-     */
-    int16_t getChannelNormalized(uint8_t channel) {
-        if (channel < 16) {
-            return map(_channels[channel], 172, 1811, -100, 100);
-        }
-        return 0;
-    }
-    
-    /**
-     * @brief Проверка статуса failsafe
-     * @return true если активен failsafe
-     */
-    bool isFailsafe() {
-        return _failsafe;
-    }
-    
-    /**
-     * @brief Проверка потери сигнала
-     * @return true если сигнал потерян
-     */
-    bool isLostFrame() {
-        return _lostFrame;
-    }
-    
-    /**
-     * @brief Получение количества хороших пакетов
-     */
-    uint32_t getGoodFrames() {
-        return _goodFrames;
-    }
-    
-    /**
-     * @brief Получение количества потерянных пакетов
-     */
-    uint32_t getLostFrames() {
-        return _lostFrames;
-    }
-    
-private:
-    HardwareSerial* _serial;
-    uint8_t _buffer[25];
-    uint8_t _bufferIndex = 0;
-    uint16_t _channels[16];
-    bool _failsafe;
-    bool _lostFrame;
-    uint32_t _goodFrames;
-    uint32_t _lostFrames;
-    unsigned long _lastUpdate = 0;
-    
-    /**
-     * @brief Парсинг SBUS пакета
-     */
-    void parsePacket() {
-        // SBUS использует 11 бит на канал, упакованные в 22 байта
-        _channels[0]  = ((_buffer[1]    | _buffer[2]<<8)                 & 0x07FF);
-        _channels[1]  = ((_buffer[2]>>3 | _buffer[3]<<5)                 & 0x07FF);
-        _channels[2]  = ((_buffer[3]>>6 | _buffer[4]<<2 | _buffer[5]<<10) & 0x07FF);
-        _channels[3]  = ((_buffer[5]>>1 | _buffer[6]<<7)                 & 0x07FF);
-        _channels[4]  = ((_buffer[6]>>4 | _buffer[7]<<4)                 & 0x07FF);
-        _channels[5]  = ((_buffer[7]>>7 | _buffer[8]<<1 | _buffer[9]<<9)  & 0x07FF);
-        _channels[6]  = ((_buffer[9]>>2 | _buffer[10]<<6)                & 0x07FF);
-        _channels[7]  = ((_buffer[10]>>5| _buffer[11]<<3)                & 0x07FF);
-        _channels[8]  = ((_buffer[12]   | _buffer[13]<<8)                & 0x07FF);
-        _channels[9]  = ((_buffer[13]>>3| _buffer[14]<<5)                & 0x07FF);
-        _channels[10] = ((_buffer[14]>>6| _buffer[15]<<2 | _buffer[16]<<10) & 0x07FF);
-        _channels[11] = ((_buffer[16]>>1| _buffer[17]<<7)                & 0x07FF);
-        _channels[12] = ((_buffer[17]>>4| _buffer[18]<<4)                & 0x07FF);
-        _channels[13] = ((_buffer[18]>>7| _buffer[19]<<1 | _buffer[20]<<9) & 0x07FF);
-        _channels[14] = ((_buffer[20]>>2| _buffer[21]<<6)                & 0x07FF);
-        _channels[15] = ((_buffer[21]>>5| _buffer[22]<<3)                & 0x07FF);
-        
-        // Флаги в байте 23
-        _failsafe = (_buffer[23] & 0x08) != 0;
-        _lostFrame = (_buffer[23] & 0x04) != 0;
-    }
+class SbusRx {
+ private:
+  /* Communication */
+  HardwareSerial *uart_;
+  static constexpr uint32_t BAUD_ = 100000;
+  /* Message len */
+  static constexpr int8_t BUF_LEN_ = 25;
+  /* SBUS message defs */
+  static constexpr int8_t NUM_SBUS_CH_ = 16;
+  static constexpr uint8_t HEADER_ = 0x0F;
+  static constexpr uint8_t FOOTER_ = 0x00;
+  static constexpr uint8_t FOOTER2_ = 0x04;
+  static constexpr uint8_t CH17_MASK_ = 0x01;
+  static constexpr uint8_t CH18_MASK_ = 0x02;
+  static constexpr uint8_t LOST_FRAME_MASK_ = 0x04;
+  static constexpr uint8_t FAILSAFE_MASK_ = 0x08;
+  /* Parsing state tracking */
+  int8_t state_ = 0;
+  uint8_t prev_byte_ = FOOTER_;
+  uint8_t cur_byte_;
+  /* Buffer for storing messages */
+  uint8_t buf_[BUF_LEN_];
+  /* Data */
+  bool new_data_;
+  std::array<int16_t, NUM_SBUS_CH_> ch_;
+  bool failsafe_ = false, lost_frame_ = false, ch17_ = false, ch18_ = false;
+  bool Parse();
+
+ public:
+  explicit SbusRx(HardwareSerial *bus) : uart_(bus) {}
+  #if defined(ESP32)
+  void Begin(const int8_t rxpin, const int8_t txpin);
+  #else
+  void Begin();
+  #endif
+  bool Read();
+  static constexpr int8_t NUM_CH() {return NUM_SBUS_CH_;}
+  inline std::array<int16_t, NUM_SBUS_CH_> ch() const {return ch_;}
+  inline bool failsafe() const {return failsafe_;}
+  inline bool lost_frame() const {return lost_frame_;}
+  inline bool ch17() const {return ch17_;}
+  inline bool ch18() const {return ch18_;}
 };
 
-#endif // SBUS_H
+class SbusTx {
+ private:
+  /* Communication */
+  HardwareSerial *uart_;
+  static constexpr uint32_t BAUD_ = 100000;
+  /* Message len */
+  static constexpr int8_t BUF_LEN_ = 25;
+  /* SBUS message defs */
+  static constexpr int8_t NUM_SBUS_CH_ = 16;
+  static constexpr uint8_t HEADER_ = 0x0F;
+  static constexpr uint8_t FOOTER_ = 0x00;
+  static constexpr uint8_t FOOTER2_ = 0x04;
+  static constexpr uint8_t CH17_MASK_ = 0x01;
+  static constexpr uint8_t CH18_MASK_ = 0x02;
+  static constexpr uint8_t LOST_FRAME_MASK_ = 0x04;
+  static constexpr uint8_t FAILSAFE_MASK_ = 0x08;
+  /* Data */
+  uint8_t buf_[BUF_LEN_];
+  std::array<int16_t, NUM_SBUS_CH_> ch_;
+  bool failsafe_ = false, lost_frame_ = false, ch17_ = false, ch18_ = false;
+
+ public:
+  explicit SbusTx(HardwareSerial *bus) : uart_(bus) {}
+  #if defined(ESP32)
+  void Begin(const int8_t rxpin, const int8_t txpin);
+  #else
+  void Begin();
+  #endif
+  void Write();
+  static constexpr int8_t NUM_CH() {return NUM_SBUS_CH_;}
+  inline void failsafe(const bool val) {failsafe_ = val;}
+  inline void lost_frame(const bool val) {lost_frame_ = val;}
+  inline void ch17(const bool val) {ch17_ = val;}
+  inline void ch18(const bool val) {ch18_ = val;}
+  inline void ch(const std::array<int16_t, NUM_SBUS_CH_> &cmd) {ch_ = cmd;}
+  inline std::array<int16_t, NUM_SBUS_CH_> ch() const {return ch_;}
+  inline bool failsafe() const {return failsafe_;}
+  inline bool lost_frame() const {return lost_frame_;}
+  inline bool ch17() const {return ch17_;}
+  inline bool ch18() const {return ch18_;}
+};
+
+}  // namespace bfs
+
+#endif  // SRC_SBUS_H_
