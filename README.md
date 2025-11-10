@@ -797,6 +797,8 @@ Y_stance = H_max
 
 - **[HARDWARE.md](docs/HARDWARE.md)** - Схема подключения всех компонентов
 - **[QUICKSTART.md](docs/QUICKSTART.md)** - Быстрый старт и первая настройка
+- **[CALIBRATION_QUICK.md](docs/CALIBRATION_QUICK.md)** - ⚡ Быстрая калибровка сервоприводов (5 шагов)
+- **[CALIBRATION.md](docs/CALIBRATION.md)** - Полное руководство по калибровке (с диагностикой)
 - **[PID_CONTROLLER.md](docs/PID_CONTROLLER.md)** - Настройка PID коэффициентов
 - **[LIBRARIES.md](firmware/LIBRARIES.md)** - Описание используемых библиотек
 
