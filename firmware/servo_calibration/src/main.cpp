@@ -56,15 +56,13 @@ bool initialized = false;
 void initServos() {
     Serial.println("=== Инициализация сервоприводов ===");
     
-    // Настройка I2C
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    Wire.setClock(I2C_FREQ);
+    // Инициализация I2C (для IMU и PCA9685)
+    Wire.begin(1, 2, 400000UL);
     
     // Инициализация PCA9685
     servos.init();
-    servos.setPWMFreq(SERVO_FREQ);
-    servos.setAngleRange(SERVO_ANGLE_MIN, SERVO_ANGLE_MAX);
-    servos.setPluseRange(SERVO_PULSE_MIN, SERVO_PULSE_MAX);
+    servos.setAngleRange(0, 300);
+    servos.setPluseRange(500, 2500);
     
     // Установка всех серво в нейтральную позицию
     for (uint8_t i = 0; i < NUM_SERVOS; i++) {
@@ -108,7 +106,7 @@ void printServoData() {
         char buffer[80];
         snprintf(buffer, sizeof(buffer), 
                  "%-14s | %3d°  | %+4d° | CH%d",
-                 SERVO_NAMES[i], 
+                SERVO_NAMES[i], 
                  currentAngles[i], 
                  servoOffsets[i],
                  i);
@@ -285,8 +283,15 @@ void setup() {
     pinMode(LED_STATUS_PIN, OUTPUT);
     digitalWrite(LED_STATUS_PIN, LOW);
     
+    // КРИТИЧЕСКИ ВАЖНО: Инициализация I2C ПЕРЕД инициализацией сервоприводов!
+    Serial.println("DEBUG: Инициализация I2C...");
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ);
+    Serial.printf("DEBUG: I2C OK (SDA=%d, SCL=%d, FREQ=%d Hz)\n", I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ);
+    
     // Инициализация сервоприводов
+    Serial.println("DEBUG: Запуск initServos()...");
     initServos();
+    Serial.println("DEBUG: initServos() завершен!");
     
     // Вывод справки
     printHelp();
