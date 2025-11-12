@@ -52,8 +52,8 @@
 #define L6  0    // Дополнительное смещение
 
 // Смещения серво для калибровки (градусы)
-#define SERVO_FL_FRONT_OFFSET -200   // 90 - 117
-#define SERVO_FL_REAR_OFFSET  -200   // 90 - 153
+#define SERVO_FL_FRONT_OFFSET -270   // 90 - 117
+#define SERVO_FL_REAR_OFFSET  -280   // 90 - 153
 #define SERVO_FR_FRONT_OFFSET -200  // 90 - 243
 #define SERVO_FR_REAR_OFFSET  -200  // 90 - 207
 
