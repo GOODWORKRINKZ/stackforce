@@ -19,18 +19,17 @@
 #define RC_CH_ROLL 3        // Канал крена
 
 // Каналы серво на PCA9685 (все 8 подключены к main контроллеру)
-// ⚠️ КАЛИБРОВКА: Ищем переднюю правую ногу методом перебора!
 // Передние ноги (Front)
 #define SERVO_FL_FRONT 11  // Front Left Front
 #define SERVO_FL_REAR  10  // Front Left Rear
-#define SERVO_FR_FRONT 0  // Front Right Front
-#define SERVO_FR_REAR  1  // Front Right Rear
+#define SERVO_FR_FRONT 0   // Front Right Front
+#define SERVO_FR_REAR  1   // Front Right Rear
 
-// Задние ноги (Back)
-#define SERVO_BL_FRONT 4  // Back Left Front
-#define SERVO_BL_REAR  5  // Back Left Rear (ВНИМАНИЕ: канал 8 = индекс 7 в массиве!)
-#define SERVO_BR_FRONT 6  // Back Right Front
-#define SERVO_BR_REAR  7  // Back Right Rear
+// Задние ноги (Back) - ИСПРАВЛЕНО: BL и BR поменяны местами
+#define SERVO_BL_FRONT 9   // Back Left Front (было 2)
+#define SERVO_BL_REAR  8   // Back Left Rear (было 3)
+#define SERVO_BR_FRONT 2   // Back Right Front (было 9)
+#define SERVO_BR_REAR  3   // Back Right Rear (было 8)
 
 // Режимы работы робота
 #define ROBOTMODE_DISABLE 0
@@ -52,15 +51,16 @@
 #define L6  0    // Дополнительное смещение
 
 // Смещения серво для калибровки (градусы)
-#define SERVO_FL_FRONT_OFFSET -270   // 90 - 117
-#define SERVO_FL_REAR_OFFSET  -280   // 90 - 153
-#define SERVO_FR_FRONT_OFFSET -200  // 90 - 243
-#define SERVO_FR_REAR_OFFSET  -200  // 90 - 207
+// Откалибровано при высоте 115мм от оси колеса до верхнего серво
+#define SERVO_FL_FRONT_OFFSET 44
+#define SERVO_FL_REAR_OFFSET  5
+#define SERVO_FR_FRONT_OFFSET -22
+#define SERVO_FR_REAR_OFFSET  -13
 
-#define SERVO_BL_FRONT_OFFSET 0   // задние = передние
-#define SERVO_BL_REAR_OFFSET  0
-#define SERVO_BR_FRONT_OFFSET 0
-#define SERVO_BR_REAR_OFFSET  0
+#define SERVO_BL_FRONT_OFFSET -45  // Поменяны местами BL ↔ BR
+#define SERVO_BL_REAR_OFFSET  -16
+#define SERVO_BR_FRONT_OFFSET 40
+#define SERVO_BR_REAR_OFFSET  27
 
 // ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
 extern int RCValue[6];  // Значения каналов RC
