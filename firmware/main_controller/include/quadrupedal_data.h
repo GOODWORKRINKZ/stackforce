@@ -19,17 +19,18 @@
 #define RC_CH_ROLL 3        // Канал крена
 
 // Каналы серво на PCA9685 (все 8 подключены к main контроллеру)
+// ⚠️ КАЛИБРОВКА: Ищем переднюю правую ногу методом перебора!
 // Передние ноги (Front)
-#define SERVO_FL_FRONT 3  // Front Left Front
-#define SERVO_FL_REAR  4  // Front Left Rear
-#define SERVO_FR_FRONT 2  // Front Right Front
+#define SERVO_FL_FRONT 11  // Front Left Front
+#define SERVO_FL_REAR  10  // Front Left Rear
+#define SERVO_FR_FRONT 0  // Front Right Front
 #define SERVO_FR_REAR  1  // Front Right Rear
 
 // Задние ноги (Back)
-#define SERVO_BL_FRONT 7  // Back Left Front
-#define SERVO_BL_REAR  8  // Back Left Rear
+#define SERVO_BL_FRONT 4  // Back Left Front
+#define SERVO_BL_REAR  5  // Back Left Rear (ВНИМАНИЕ: канал 8 = индекс 7 в массиве!)
 #define SERVO_BR_FRONT 6  // Back Right Front
-#define SERVO_BR_REAR  5  // Back Right Rear
+#define SERVO_BR_REAR  7  // Back Right Rear
 
 // Режимы работы робота
 #define ROBOTMODE_DISABLE 0
@@ -51,12 +52,12 @@
 #define L6  0    // Дополнительное смещение
 
 // Смещения серво для калибровки (градусы)
-#define SERVO_FL_FRONT_OFFSET 0
-#define SERVO_FL_REAR_OFFSET  10
-#define SERVO_FR_FRONT_OFFSET -8
-#define SERVO_FR_REAR_OFFSET  10
+#define SERVO_FL_FRONT_OFFSET -200   // 90 - 117
+#define SERVO_FL_REAR_OFFSET  -200   // 90 - 153
+#define SERVO_FR_FRONT_OFFSET -200  // 90 - 243
+#define SERVO_FR_REAR_OFFSET  -200  // 90 - 207
 
-#define SERVO_BL_FRONT_OFFSET 0
+#define SERVO_BL_FRONT_OFFSET 0   // задние = передние
 #define SERVO_BL_REAR_OFFSET  0
 #define SERVO_BR_FRONT_OFFSET 0
 #define SERVO_BR_REAR_OFFSET  0
