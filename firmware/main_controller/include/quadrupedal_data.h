@@ -16,13 +16,13 @@
 #define CAN_ID_MAIN_TO_AUX 0x100  // ID сообщений от main к aux
 #define CAN_ID_AUX_TO_MAIN 0x101  // ID сообщений от aux к main
 
-// Калибровка каналов SBUS
-#define RCCHANNEL_MIN 200
-#define RCCHANNEL_MAX 1800
-#define RCCHANNEL_MID 1000
-#define RCCHANNEL3_MIN 200
-#define RCCHANNEL3_MID 1000
-#define RCCHANNEL3_MAX 1800
+// Калибровка каналов SBUS (протокол SBUS: 172-1811, центр 992)
+#define RCCHANNEL_MIN 172
+#define RCCHANNEL_MAX 1811
+#define RCCHANNEL_MID 992
+#define RCCHANNEL3_MIN 172
+#define RCCHANNEL3_MID 992
+#define RCCHANNEL3_MAX 1811
 
 // Мэппинг каналов SBUS (индексы массива 0-15)
 // CH1 = sbus.ch[0], CH2 = sbus.ch[1], и т.д.

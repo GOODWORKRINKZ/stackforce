@@ -8,6 +8,29 @@
 #include "driver/twai.h"
 
 /**
+ * @brief Преобразование SBUS значения (172-1811) в проценты (-100..+100)
+ * С учетом реального центра SBUS протокола (992) и мёртвой зоны
+ */
+static float sbusToPercent(int16_t sbusValue, int16_t deadzone = 20) {
+    const int16_t SBUS_MIN = 172;
+    const int16_t SBUS_MAX = 1811;
+    const int16_t SBUS_CENTER = 992;
+    
+    // Мёртвая зона вокруг центра
+    if (abs(sbusValue - SBUS_CENTER) < deadzone) {
+        return 0.0f;
+    }
+    
+    if (sbusValue < SBUS_CENTER) {
+        // Отрицательная сторона: от SBUS_MIN до SBUS_CENTER → -100% to 0%
+        return ((float)(sbusValue - SBUS_MIN) / (SBUS_CENTER - SBUS_MIN) - 1.0f) * 100.0f;
+    } else {
+        // Положительная сторона: от SBUS_CENTER до SBUS_MAX → 0% to +100%
+        return ((float)(sbusValue - SBUS_CENTER) / (SBUS_MAX - SBUS_CENTER)) * 100.0f;
+    }
+}
+
+/**
  * @brief Конструктор
  */
 Robot::Robot() 
@@ -41,9 +64,9 @@ Robot::Robot()
       lowestHeight(ROBOT_LOWEST_FOR_MOT),
       highestHeight(ROBOT_HIGHEST)
 {
-    // Инициализация массива RC значений
-    for(int i = 0; i < 6; i++) {
-        rcValues[i] = 1000;
+    // Инициализация массива RC значений (центр SBUS)
+    for(int i = 0; i < 8; i++) {
+        rcValues[i] = RCCHANNEL_MID;
     }
     
     // Инициализация структур данных
@@ -136,7 +159,7 @@ void Robot::readRC() {
     if (sbusRx.Read()) {
         sbusData = sbusRx.ch();
         
-        for(int i = 0; i < 6; i++) {
+        for(int i = 0; i < 8; i++) {  // Читаем 8 каналов (0-7)
             rcValues[i] = sbusData[i];
         }
         
@@ -145,6 +168,25 @@ void Robot::readRC() {
         rcValues[1] = _constrain(rcValues[1], RCCHANNEL_MIN, RCCHANNEL_MAX);
         rcValues[2] = _constrain(rcValues[2], RCCHANNEL3_MIN, RCCHANNEL3_MAX);
         rcValues[3] = _constrain(rcValues[3], RCCHANNEL_MIN, RCCHANNEL_MAX);
+        
+        // ARM канал (CH5) - включение/выключение моторов
+        // Переключатель в верхнем положении (>1500) = моторы включены
+        bool armState = (rcValues[RC_CH_ARM] > 1500);
+        if (armState != motorsEnabled) {
+            motorsEnabled = armState;
+            Serial.printf("[ROBOT] Моторы %s (ARM CH5 = %d)\n", 
+                          motorsEnabled ? "ВКЛЮЧЕНЫ" : "ВЫКЛЮЧЕНЫ",
+                          rcValues[RC_CH_ARM]);
+        }
+        
+        // STAB канал (CH8) - включение/выключение стабилизации
+        bool stabState = (rcValues[RC_CH_STAB] > 1500);
+        if (stabState != stabilizationEnabled) {
+            stabilizationEnabled = stabState;
+            Serial.printf("[ROBOT] Стабилизация %s (STAB CH8 = %d)\n",
+                          stabilizationEnabled ? "ВКЛЮЧЕНА" : "ВЫКЛЮЧЕНА",
+                          rcValues[RC_CH_STAB]);
+        }
     }
 }
 
@@ -192,13 +234,9 @@ void Robot::updateMotors() {
         return;
     }
     
-    // Получение команд из RC
-    float forward = map(rcValues[RC_CH_FORWARD], RCCHANNEL_MIN, RCCHANNEL_MAX, -100, 100) / 100.0;
-    float turn = map(rcValues[RC_CH_TURN], RCCHANNEL_MIN, RCCHANNEL_MAX, -100, 100) / 100.0;
-    
-    // Дедзона
-    if (abs(forward) < 0.05) forward = 0;
-    if (abs(turn) < 0.05) turn = 0;
+    // Получение команд из RC (с правильным центром SBUS и дедзоной)
+    float forward = sbusToPercent(rcValues[RC_CH_FORWARD]) / 100.0;
+    float turn = sbusToPercent(rcValues[RC_CH_TURN]) / 100.0;
     
     // Вычисление скоростей для дифференциального привода
     float leftSpeed = forward - turn;
@@ -294,16 +332,12 @@ void Robot::update() {
     if (ikEnabled && currentGait) {
         // Подготовка параметров для походки
         GaitParams gaitParams;
-        gaitParams.forward = map(rcValues[RC_CH_FORWARD], RCCHANNEL_MIN, RCCHANNEL_MAX, -100, 100) / 100.0;
-        gaitParams.turn = map(rcValues[RC_CH_TURN], RCCHANNEL_MIN, RCCHANNEL_MAX, -100, 100) / 100.0;
+        gaitParams.forward = sbusToPercent(rcValues[RC_CH_FORWARD]) / 100.0;
+        gaitParams.turn = sbusToPercent(rcValues[RC_CH_TURN]) / 100.0;
         gaitParams.height = map(rcValues[RC_CH_HEIGHT], RCCHANNEL3_MIN, RCCHANNEL3_MAX, lowestHeight, highestHeight);
         gaitParams.pitch = pose.pitch;
         gaitParams.roll = pose.roll;
         gaitParams.speed = bldcData.M0_Vel;  // Скорость из телеметрии моторов
-        
-        // Дедзона для команд
-        if (abs(gaitParams.forward) < 0.05) gaitParams.forward = 0;
-        if (abs(gaitParams.turn) < 0.05) gaitParams.turn = 0;
         
         // Получение целевых позиций от походки
         GaitTargets targets = currentGait->update(gaitParams);

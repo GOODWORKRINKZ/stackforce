@@ -51,7 +51,7 @@ private:
     robotmotionparam motion;            // Команды движения
     SF_BLDC_DATA bldcData;              // Данные от BLDC моторов
     
-    int rcValues[6];                    // Значения каналов RC
+    int rcValues[8];                    // Значения каналов RC (CH1-CH8)
     std::array<int16_t, bfs::SbusRx::NUM_CH()> sbusData;
     
     // Флаги и параметры
