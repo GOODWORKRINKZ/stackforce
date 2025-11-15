@@ -43,10 +43,12 @@ struct GaitParams {
     float height;        // Базовая высота (мм)
     float pitch;         // Тангаж от IMU (градусы)
     float roll;          // Крен от IMU (градусы)
+    float stabPitch;     // Накопленная коррекция стабилизации по pitch
+    float stabRoll;      // Накопленная коррекция стабилизации по roll
     float speed;         // Текущая скорость робота
     
     GaitParams() : forward(0), turn(0), height(100), 
-                   pitch(0), roll(0), speed(0) {}
+                   pitch(0), roll(0), stabPitch(0), stabRoll(0), speed(0) {}
 };
 
 /**

@@ -15,6 +15,9 @@
 #include "pid.h"
 #include "sbus.h"
 #include "quadrupedal_data.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 /**
  * @brief Класс управления роботом
@@ -77,11 +80,17 @@ private:
     
     // Приватные методы
     void readRC();                      // Чтение RC
-    void readIMU();                     // Чтение IMU
-    void updateStabilization();         // Обновление стабилизации
+    robotposeparam readIMU();           // Чтение IMU
+    void updateStabilization(const robotposeparam& poseData); // Обновление стабилизации
     void updateMotors();                // Обновление моторов
     void setupCAN();                    // Инициализация CAN
     void sendToAux();                   // Отправка данных aux контроллеру
+    void copyPoseAndStab(robotposeparam& poseOut, float& stabPitchOut, float& stabRollOut);
+    void startTasks();
+    static void imuTaskEntry(void* arg);
+    static void controlTaskEntry(void* arg);
+    void imuTaskLoop();
+    void controlTaskLoop();
     
 public:
     /**
@@ -170,6 +179,11 @@ public:
      * @brief Получить данные движения
      */
     const robotmotionparam& getMotion() const { return motion; }
+
+private:
+    TaskHandle_t imuTaskHandle;
+    TaskHandle_t controlTaskHandle;
+    SemaphoreHandle_t poseMutex;
 };
 
 #endif // ROBOT_H

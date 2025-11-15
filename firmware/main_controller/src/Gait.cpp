@@ -65,25 +65,34 @@ LegTarget stanceTrajectory(float t, float length, float baseX, float baseY) {
     return target;
 }
 
+static void applyBodyCompensation(GaitTargets& targets, float pitchComp, float rollComp) {
+    if (pitchComp == 0 && rollComp == 0) {
+        return;
+    }
+    targets.frontLeft.y -= pitchComp + rollComp;
+    targets.frontRight.y -= pitchComp - rollComp;
+    targets.backLeft.y += pitchComp + rollComp;
+    targets.backRight.y += pitchComp - rollComp;
+}
+
 // ==================== СТОЙКА (STAND) ====================
 
 GaitTargets StandGait::update(const GaitParams& params) {
     GaitTargets targets(params.height);
     
     if (stabilizationEnabled) {
-        // Компенсация крена и тангажа
-        float rollCompensation = params.roll * 0.3f;   // Коэффициент компенсации
-        float pitchCompensation = params.pitch * 0.3f;
+        float rollCompensation = params.stabRoll + params.roll * 0.3f;
+        float pitchCompensation = params.stabPitch + params.pitch * 0.3f;
         
-        // Передние ноги: компенсация pitch
         targets.frontLeft.y = params.height - pitchCompensation + rollCompensation;
         targets.frontRight.y = params.height - pitchCompensation - rollCompensation;
-        
-        // Задние ноги: компенсация pitch в обратную сторону
         targets.backLeft.y = params.height + pitchCompensation + rollCompensation;
         targets.backRight.y = params.height + pitchCompensation - rollCompensation;
     }
     
+    float rollComp = params.stabRoll + params.roll * 0.15f;
+    float pitchComp = params.stabPitch + params.pitch * 0.15f;
+    applyBodyCompensation(targets, pitchComp, rollComp);
     return targets;
 }
 
@@ -137,14 +146,9 @@ GaitTargets TrotGait::update(const GaitParams& params) {
         targets.backLeft = stanceTrajectory(t, actualStepLength, 0, params.height);
     }
     
-    // Применение компенсации стабилизации
-    float rollComp = params.roll * 0.2f;
-    float pitchComp = params.pitch * 0.2f;
-    
-    targets.frontLeft.y -= pitchComp + rollComp;
-    targets.frontRight.y -= pitchComp - rollComp;
-    targets.backLeft.y += pitchComp + rollComp;
-    targets.backRight.y += pitchComp - rollComp;
+    float rollComp = params.stabRoll + params.roll * 0.2f;
+    float pitchComp = params.stabPitch + params.pitch * 0.2f;
+    applyBodyCompensation(targets, pitchComp, rollComp);
     
     return targets;
 }
@@ -205,14 +209,9 @@ GaitTargets WalkGait::update(const GaitParams& params) {
             break;
     }
     
-    // Стабилизация
-    float rollComp = params.roll * 0.25f;
-    float pitchComp = params.pitch * 0.25f;
-    
-    targets.frontLeft.y -= pitchComp + rollComp;
-    targets.frontRight.y -= pitchComp - rollComp;
-    targets.backLeft.y += pitchComp + rollComp;
-    targets.backRight.y += pitchComp - rollComp;
+    float rollComp = params.stabRoll + params.roll * 0.25f;
+    float pitchComp = params.stabPitch + params.pitch * 0.25f;
+    applyBodyCompensation(targets, pitchComp, rollComp);
     
     return targets;
 }
@@ -320,14 +319,9 @@ GaitTargets CrawlGait::update(const GaitParams& params) {
             break;
     }
     
-    // Усиленная стабилизация для медленной походки
-    float rollComp = params.roll * 0.3f;
-    float pitchComp = params.pitch * 0.3f;
-    
-    targets.frontLeft.y -= pitchComp + rollComp;
-    targets.frontRight.y -= pitchComp - rollComp;
-    targets.backLeft.y += pitchComp + rollComp;
-    targets.backRight.y += pitchComp - rollComp;
+    float rollComp = params.stabRoll + params.roll * 0.3f;
+    float pitchComp = params.stabPitch + params.pitch * 0.3f;
+    applyBodyCompensation(targets, pitchComp, rollComp);
     
     return targets;
 }

@@ -62,7 +62,10 @@ Robot::Robot()
       rollLimit(20),
       legDistance(100),
       lowestHeight(ROBOT_LOWEST_FOR_MOT),
-      highestHeight(ROBOT_HIGHEST)
+    highestHeight(ROBOT_HIGHEST),
+    imuTaskHandle(nullptr),
+    controlTaskHandle(nullptr),
+    poseMutex(nullptr)
 {
     // Инициализация массива RC значений (центр SBUS)
     for(int i = 0; i < 8; i++) {
@@ -118,6 +121,8 @@ void Robot::init() {
     // CAN
     setupCAN();
     
+    startTasks();
+
     // Установка начального режима
     motion.mode = ROBOTMODE_MOTION;
     motion.highest = highestHeight;
@@ -194,36 +199,71 @@ void Robot::readRC() {
 /**
  * @brief Получение данных MPU6050
  */
-void Robot::readIMU() {
+robotposeparam Robot::readIMU() {
     imu.update();
-    pose.pitch = -imu.angle[0];
-    pose.roll = imu.angle[1];
-    pose.yaw = imu.angle[2];
-    pose.GyroX = imu.gyro[1];
-    pose.GyroY = -imu.gyro[0];
-    pose.GyroZ = -imu.gyro[2];
+    robotposeparam newPose;
+    newPose.pitch = -imu.angle[0];
+    newPose.roll = imu.angle[1];
+    newPose.yaw = imu.angle[2];
+    newPose.GyroX = imu.gyro[1];
+    newPose.GyroY = -imu.gyro[0];
+    newPose.GyroZ = -imu.gyro[2];
+
+    if (poseMutex) {
+        if (xSemaphoreTake(poseMutex, portMAX_DELAY) == pdTRUE) {
+            pose = newPose;
+            xSemaphoreGive(poseMutex);
+        }
+    } else {
+        pose = newPose;
+    }
+
+    return newPose;
 }
 
 /**
  * @brief Обновление стабилизации
  */
-void Robot::updateStabilization() {
-    if (!stabilizationEnabled) {
-        stabPitch = 0;
-        stabRoll = 0;
-        return;
+void Robot::updateStabilization(const robotposeparam& poseData) {
+    float currentStabPitch = 0.0f;
+    float currentStabRoll = 0.0f;
+
+    if (poseMutex) {
+        if (xSemaphoreTake(poseMutex, portMAX_DELAY) == pdTRUE) {
+            currentStabPitch = stabPitch;
+            currentStabRoll = stabRoll;
+            xSemaphoreGive(poseMutex);
+        } else {
+            currentStabPitch = stabPitch;
+            currentStabRoll = stabRoll;
+        }
+    } else {
+        currentStabPitch = stabPitch;
+        currentStabRoll = stabRoll;
     }
-    
-    // PID стабилизация по pitch и roll
-    float pitchCorrection = pidPitch(0 - pose.pitch);
-    float rollCorrection = pidRoll(0 - pose.roll);
-    
-    stabPitch += pitchCorrection * 0.01;  // Плавное накопление
-    stabRoll += rollCorrection * 0.01;
-    
-    // Ограничение накопленной коррекции
-    stabPitch = _constrain(stabPitch, -20, 20);
-    stabRoll = _constrain(stabRoll, -rollLimit, rollLimit);
+
+    float newStabPitch = 0.0f;
+    float newStabRoll = 0.0f;
+
+    if (stabilizationEnabled) {
+        float pitchCorrection = pidPitch(0 - poseData.pitch);
+        float rollCorrection = pidRoll(0 - poseData.roll);
+        newStabPitch = currentStabPitch + pitchCorrection * 0.01f;
+        newStabRoll = currentStabRoll + rollCorrection * 0.01f;
+        newStabPitch = _constrain(newStabPitch, -20, 20);
+        newStabRoll = _constrain(newStabRoll, -rollLimit, rollLimit);
+    }
+
+    if (poseMutex) {
+        if (xSemaphoreTake(poseMutex, portMAX_DELAY) == pdTRUE) {
+            stabPitch = newStabPitch;
+            stabRoll = newStabRoll;
+            xSemaphoreGive(poseMutex);
+        }
+    } else {
+        stabPitch = newStabPitch;
+        stabRoll = newStabRoll;
+    }
 }
 
 /**
@@ -254,6 +294,22 @@ void Robot::updateMotors() {
     bldcData = motors.getBLDCData();
 }
 
+void Robot::copyPoseAndStab(robotposeparam& poseOut, float& stabPitchOut, float& stabRollOut) {
+    if (poseMutex) {
+        if (xSemaphoreTake(poseMutex, portMAX_DELAY) == pdTRUE) {
+            poseOut = pose;
+            stabPitchOut = stabPitch;
+            stabRollOut = stabRoll;
+            xSemaphoreGive(poseMutex);
+            return;
+        }
+    }
+
+    poseOut = pose;
+    stabPitchOut = stabPitch;
+    stabRollOut = stabRoll;
+}
+
 /**
  * @brief Инициализация CAN шины
  */
@@ -278,6 +334,81 @@ void Robot::setupCAN() {
         twaiInstalled = true;
     } else {
         Serial.println("[ROBOT] ОШИБКА: Не удалось запустить TWAI");
+    }
+}
+
+void Robot::startTasks() {
+    if (!poseMutex) {
+        poseMutex = xSemaphoreCreateMutex();
+        if (!poseMutex) {
+            Serial.println("[ROBOT] ОШИБКА: не удалось создать mutex позы");
+            return;
+        }
+    }
+
+    if (imuTaskHandle == nullptr) {
+        BaseType_t res = xTaskCreatePinnedToCore(
+            Robot::imuTaskEntry,
+            "IMU",
+            4096,
+            this,
+            3,
+            &imuTaskHandle,
+            0);
+        if (res != pdPASS) {
+            Serial.println("[ROBOT] ОШИБКА: не удалось запустить IMU таск");
+            imuTaskHandle = nullptr;
+        } else {
+            Serial.println("[ROBOT] IMU таск запущен на ядре 0");
+        }
+    }
+
+    if (controlTaskHandle == nullptr) {
+        BaseType_t res = xTaskCreatePinnedToCore(
+            Robot::controlTaskEntry,
+            "Control",
+            8192,
+            this,
+            2,
+            &controlTaskHandle,
+            1);
+        if (res != pdPASS) {
+            Serial.println("[ROBOT] ОШИБКА: не удалось запустить контрольный таск");
+            controlTaskHandle = nullptr;
+        } else {
+            Serial.println("[ROBOT] Контрольный таск запущен на ядре 1");
+        }
+    }
+}
+
+void Robot::imuTaskEntry(void* arg) {
+    if (arg) {
+        static_cast<Robot*>(arg)->imuTaskLoop();
+    }
+    vTaskDelete(nullptr);
+}
+
+void Robot::controlTaskEntry(void* arg) {
+    if (arg) {
+        static_cast<Robot*>(arg)->controlTaskLoop();
+    }
+    vTaskDelete(nullptr);
+}
+
+void Robot::imuTaskLoop() {
+    const TickType_t delayTicks = pdMS_TO_TICKS(1);
+    while (true) {
+        robotposeparam latestPose = readIMU();
+        updateStabilization(latestPose);
+        vTaskDelay(delayTicks);
+    }
+}
+
+void Robot::controlTaskLoop() {
+    const TickType_t delayTicks = pdMS_TO_TICKS(5);
+    while (true) {
+        update();
+        vTaskDelay(delayTicks);
     }
 }
 
@@ -318,13 +449,14 @@ void Robot::sendToAux() {
 void Robot::update() {
     static uint8_t loopCnt = 0;
     loopCnt++;
+
+    robotposeparam poseSnapshot;
+    float stabPitchSnapshot = 0.0f;
+    float stabRollSnapshot = 0.0f;
+    copyPoseAndStab(poseSnapshot, stabPitchSnapshot, stabRollSnapshot);
     
     // Чтение датчиков
     readRC();
-    readIMU();
-    
-    // Обновление стабилизации
-    updateStabilization();
     
     // Обновление моторов
     updateMotors();
@@ -336,8 +468,10 @@ void Robot::update() {
         gaitParams.forward = sbusToPercent(rcValues[RC_CH_FORWARD]) / 100.0;
         gaitParams.turn = sbusToPercent(rcValues[RC_CH_TURN]) / 100.0;
         gaitParams.height = map(rcValues[RC_CH_HEIGHT], RCCHANNEL3_MIN, RCCHANNEL3_MAX, lowestHeight, highestHeight);
-        gaitParams.pitch = stabilizationEnabled ? pose.pitch : 0.0f;
-        gaitParams.roll = stabilizationEnabled ? pose.roll : 0.0f;
+        gaitParams.pitch = stabilizationEnabled ? poseSnapshot.pitch : 0.0f;
+        gaitParams.roll = stabilizationEnabled ? poseSnapshot.roll : 0.0f;
+        gaitParams.stabPitch = stabilizationEnabled ? stabPitchSnapshot : 0.0f;
+        gaitParams.stabRoll = stabilizationEnabled ? stabRollSnapshot : 0.0f;
         if (currentGait) {
             currentGait->setStabilization(stabilizationEnabled);
         }
@@ -345,6 +479,13 @@ void Robot::update() {
         
         // Получение целевых позиций от походки
         GaitTargets targets = currentGait->update(gaitParams);
+        auto clampLegY = [this](LegTarget& leg) {
+            leg.y = _constrain(leg.y, lowestHeight, highestHeight);
+        };
+        clampLegY(targets.frontLeft);
+        clampLegY(targets.frontRight);
+        clampLegY(targets.backLeft);
+        clampLegY(targets.backRight);
         
         // Применение к ногам
         legFL.moveTo(targets.frontLeft.x, targets.frontLeft.y);
@@ -354,17 +495,19 @@ void Robot::update() {
     }
     
     // Отправка данных на aux контроллер
-    if (loopCnt % 10 == 0) {  // Каждые 10 циклов
-        sendToAux();
-    }
-    
-    // Вывод телеметрии
     if (loopCnt % 100 == 0) {  // Каждые 100 циклов
+        unsigned long now = millis();
+        Serial.printf("[ROBOT][%lu ms] Gait: %s | Pitch: %.1f Roll: %.1f | FL: %.1f FR: %.1f BL: %.1f BR: %.1f\n",
+                      now,
+                      currentGait ? currentGait->getName().c_str() : "None",
+                      poseSnapshot.pitch, poseSnapshot.roll,
+                      legFL.getY(), legFR.getY(),
+                      legBL.getY(), legBR.getY());
         Serial.printf("[ROBOT] Gait: %s | Pitch: %.1f Roll: %.1f | FL: %.1f FR: %.1f BL: %.1f BR: %.1f\n",
-            currentGait->getName().c_str(),
-            pose.pitch, pose.roll,
-            legFL.getY(), legFR.getY(),
-            legBL.getY(), legBR.getY());
+                      currentGait ? currentGait->getName().c_str() : "None",
+                      poseSnapshot.pitch, poseSnapshot.roll,
+                      legFL.getY(), legFR.getY(),
+                      legBL.getY(), legBR.getY());
     }
 }
 
