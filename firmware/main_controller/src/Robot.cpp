@@ -83,10 +83,20 @@ void Robot::init() {
     Serial.println("[ROBOT] Инициализация...");
     
     // I2C
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    Wire.setClock(I2C_FREQ);
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ);
+   
     Serial.println("[ROBOT] I2C инициализирован");
     
+    // Серво
+    servos.init();
+    servos.setAngleRange(0, 300);
+    servos.setPluseRange(500, 2500);
+    Serial.println("[ROBOT] Серво инициализированы");
+    delay(100);
+    // IMU
+    imu.init();
+    Serial.println("[ROBOT] IMU инициализирован");
+
     // SBUS приемник (библиотека от Денге)
     sbusRx.Begin(SBUSPIN, -1);  // RX пин, TX не используется
     Serial.printf("[ROBOT] SBUS инициализирован на GPIO%d\n", SBUSPIN);
@@ -96,16 +106,7 @@ void Robot::init() {
     motors.init();
     Serial.println("[ROBOT] BLDC моторы инициализированы");
     
-    // IMU
-    imu.init();
-    Serial.println("[ROBOT] IMU инициализирован");
     
-    // Серво
-    servos.init();
-    servos.setAngleRange(0, 300);
-    servos.setPluseRange(500, 2500);
-    Serial.println("[ROBOT] Серво инициализированы");
-    delay(100);
     
     // Инициализация ног
     legFL.init();

@@ -8,7 +8,7 @@
 // ESP32-S3 DevKit C1 - используем GPIO 1 и 2 (как в коде Денге)
 #define I2C_SDA_PIN 1
 #define I2C_SCL_PIN 2
-#define I2C_FREQ 400000
+#define I2C_FREQ 400000UL
 
 // ==================== CAN/TWAI НАСТРОЙКИ ====================
 #define CAN_TX_PIN 35
