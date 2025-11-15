@@ -11,7 +11,7 @@
 #ifndef KINEMATICS_H
 #define KINEMATICS_H
 
-#include "config.h"
+#include "quadrupedal_data.h"
 
 /**
  * @brief Структура для позиции точки в пространстве

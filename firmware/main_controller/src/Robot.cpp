@@ -4,7 +4,7 @@
  */
 
 #include "Robot.h"
-#include "config.h"
+#include "quadrupedal_data.h"
 #include "driver/twai.h"
 
 /**
@@ -64,9 +64,9 @@ void Robot::init() {
     Wire.setClock(I2C_FREQ);
     Serial.println("[ROBOT] I2C инициализирован");
     
-    // SBUS
-    Serial1.begin(100000, SERIAL_8E2, SBUSPIN);
-    Serial.println("[ROBOT] SBUS инициализирован");
+    // SBUS приемник (библиотека от Денге)
+    sbusRx.Begin(SBUSPIN, -1);  // RX пин, TX не используется
+    Serial.printf("[ROBOT] SBUS инициализирован на GPIO%d\n", SBUSPIN);
     
     // BLDC моторы
     Serial2.begin(115200, SERIAL_8N1, 17, 18);

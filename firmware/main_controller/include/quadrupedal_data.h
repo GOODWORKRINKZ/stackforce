@@ -2,7 +2,19 @@
 #define _QUADRUPEDAL_DATA_h
 
 // ==================== SBUS НАСТРОЙКИ ====================
-#define SBUSPIN 16  // RX пин для SBUS (Serial1 на ESP32)
+#define SBUSPIN 40  // RX пин для SBUS (Serial1 на ESP32-S3, через плату распределения)
+
+// ==================== I2C НАСТРОЙКИ ====================
+// ESP32-S3 DevKit C1 - используем GPIO 1 и 2 (как в коде Денге)
+#define I2C_SDA_PIN 1
+#define I2C_SCL_PIN 2
+#define I2C_FREQ 400000
+
+// ==================== CAN/TWAI НАСТРОЙКИ ====================
+#define CAN_TX_PIN 35
+#define CAN_RX_PIN 41
+#define CAN_ID_MAIN_TO_AUX 0x100  // ID сообщений от main к aux
+#define CAN_ID_AUX_TO_MAIN 0x101  // ID сообщений от aux к main
 
 // Калибровка каналов SBUS
 #define RCCHANNEL_MIN 200
@@ -12,11 +24,18 @@
 #define RCCHANNEL3_MID 1000
 #define RCCHANNEL3_MAX 1800
 
-// Мэппинг каналов (4-ногий колесный робот)
-#define RC_CH_FORWARD 1     // Канал вперед/назад
-#define RC_CH_TURN 0        // Канал поворота
-#define RC_CH_HEIGHT 2      // Канал высоты
-#define RC_CH_ROLL 3        // Канал крена
+// Мэппинг каналов SBUS (индексы массива 0-15)
+// CH1 = sbus.ch[0], CH2 = sbus.ch[1], и т.д.
+#define RC_CH_FORWARD    1     // CH2 - вперед/назад (индекс 1)
+#define RC_CH_TURN       3     // CH4 - влево/вправо (индекс 3)
+#define RC_CH_ARM        4     // CH5 - ARM моторов (индекс 4)
+#define RC_CH_MODE1      5     // CH6 - режим 1 (3 позиции, индекс 5)
+#define RC_CH_MODE2      6     // CH7 - режим 2 (3 позиции, индекс 6)
+#define RC_CH_STAB       7     // CH8 - стабилизация вкл/выкл (индекс 7)
+
+// Старые для совместимости (можно удалить позже)
+#define RC_CH_HEIGHT     2     // CH3 - высота (индекс 2, если используется)
+#define RC_CH_ROLL       3     // CH4 - крен
 
 // Каналы серво на PCA9685 (все 8 подключены к main контроллеру)
 // ВНИМАНИЕ: Робот повернут на 180° относительно гироскопа
@@ -140,6 +159,22 @@ typedef struct {
     float differVel;
     float centerAngleOffset;
 } controlparam;
+
+// ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
+// Определение позиции 3-позиционного переключателя
+// Возвращает: 0 (низ), 1 (центр), 2 (верх)
+inline int get3PosSwitchPosition(int16_t value) {
+    if (value < 600) return 0;        // Нижняя позиция
+    else if (value > 1400) return 2;  // Верхняя позиция
+    else return 1;                    // Центральная позиция
+}
+
+// Определение состояния 2-позиционного переключателя
+// Возвращает: false (выкл), true (вкл)
+inline bool get2PosSwitchState(int16_t value) {
+    return value > 1000;  // Порог в середине диапазона
+}
 
 // Координаты
 typedef struct {

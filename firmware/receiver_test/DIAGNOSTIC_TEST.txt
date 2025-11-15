@@ -1,0 +1,82 @@
+/**
+ * @brief ДИАГНОСТИКА - Проверка GPIO40 на прием данных
+ * 
+ * Скопируйте этот код в main.cpp для быстрого теста
+ */
+
+#include <Arduino.h>
+
+#define TEST_PIN 40
+
+void setup() {
+    Serial.begin(115200);
+    delay(2000);
+    
+    Serial.println("\n╔══════════════════════════════════════════════╗");
+    Serial.println("║   GPIO40 RAW DATA TEST - SBUS DIAGNOSTICS   ║");
+    Serial.println("╚══════════════════════════════════════════════╝\n");
+    
+    // Тест 1: Попробуем SBUS настройки (инвертированный)
+    Serial.println("[TEST 1] SBUS mode: 100000 baud, 8E2, inverted");
+    Serial1.begin(100000, SERIAL_8E2, TEST_PIN, -1, true);
+    delay(1000);
+    Serial.printf("Serial1.available() = %d\n", Serial1.available());
+    
+    // Тест 2: Попробуем стандартный UART
+    Serial.println("\n[TEST 2] Standard UART: 100000 baud, 8N1");
+    Serial1.end();
+    Serial1.begin(100000, SERIAL_8N1, TEST_PIN, -1);
+    delay(1000);
+    Serial.printf("Serial1.available() = %d\n", Serial1.available());
+    
+    // Тест 3: Вернемся к SBUS
+    Serial.println("\n[TEST 3] Back to SBUS mode");
+    Serial1.end();
+    Serial1.begin(100000, SERIAL_8E2, TEST_PIN, -1, true);
+    
+    Serial.println("\n▶ Начинаем мониторинг. Подвигайте стики на передатчике!\n");
+}
+
+void loop() {
+    static unsigned long bytesReceived = 0;
+    static unsigned long lastReport = 0;
+    static uint8_t lastByte = 0;
+    
+    // Читаем все байты
+    while (Serial1.available()) {
+        uint8_t b = Serial1.read();
+        bytesReceived++;
+        
+        // Выводим первые 100 байт для анализа
+        if (bytesReceived <= 100) {
+            Serial.printf("#%lu: 0x%02X (%3d) ", bytesReceived, b, b);
+            if (bytesReceived % 8 == 0) Serial.println();
+        }
+        
+        // Проверяем на SBUS header (0x0F)
+        if (b == 0x0F && lastByte == 0x00) {
+            Serial.printf("\n✓ Обнаружен SBUS HEADER! (байт #%lu)\n", bytesReceived);
+        }
+        
+        lastByte = b;
+    }
+    
+    // Отчет каждые 3 секунды
+    if (millis() - lastReport > 3000) {
+        Serial.printf("\n[%lus] Получено байт: %lu | Serial1.available(): %d\n",
+                      millis()/1000, bytesReceived, Serial1.available());
+        
+        if (bytesReceived == 0) {
+            Serial.println("⚠ НЕТ ДАННЫХ! Проверьте:");
+            Serial.println("  1. Передатчик включен?");
+            Serial.println("  2. Приемник связан (bind)?");
+            Serial.println("  3. LED на приемнике горит?");
+            Serial.println("  4. Провода правильно подключены?");
+            Serial.printf("  5. Signal -> GPIO%d (пин %d на плате)\n", TEST_PIN, TEST_PIN);
+        }
+        
+        lastReport = millis();
+    }
+    
+    delay(1);
+}
