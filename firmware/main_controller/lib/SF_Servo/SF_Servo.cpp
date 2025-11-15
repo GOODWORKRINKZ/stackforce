@@ -4,7 +4,7 @@ SF_Servo::SF_Servo(TwoWire &i2c)
     :  _i2c(&i2c), freq(50){}
 
 void SF_Servo::init(){
-    _i2c->begin();
+    //_i2c->begin();
     reset();
 
     setPWMFreq(freq);
