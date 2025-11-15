@@ -54,15 +54,21 @@
 #define I2C_SCL_PIN 22
 #define I2C_FREQ 400000
 
-// PCA9685 для сервоприводов передних ног
+// PCA9685 для сервоприводов
 #define PCA9685_ADDR 0x40
 #define SERVO_FREQ 50                 // 50 Hz для серво
 
-// Каналы PCA9685 для передних ног
+// Каналы PCA9685 для всех 8 сервоприводов (4 ноги x 2 серво)
+// FL = Front Left, FR = Front Right, BL = Back Left, BR = Back Right
+// SHOULDER = верхний сустав (плечо), HIP = нижний сустав (бедро)
 #define SERVO_FL_SHOULDER 0           // Передняя левая - плечо
 #define SERVO_FL_HIP 1                // Передняя левая - бедро
 #define SERVO_FR_SHOULDER 2           // Передняя правая - плечо
 #define SERVO_FR_HIP 3                // Передняя правая - бедро
+#define SERVO_BL_SHOULDER 4           // Задняя левая - плечо
+#define SERVO_BL_HIP 5                // Задняя левая - бедро
+#define SERVO_BR_SHOULDER 6           // Задняя правая - плечо
+#define SERVO_BR_HIP 7                // Задняя правая - бедро
 
 // MPU6050 IMU
 #define IMU_ADDR 0x68

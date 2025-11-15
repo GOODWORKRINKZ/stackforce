@@ -29,26 +29,29 @@
 // Всего 8 сервоприводов (4 ноги × 2 серво на ногу)
 #define NUM_SERVOS 8
 
-// Каналы PCA9685 для всех сервоприводов
-#define SERVO_FL_SHOULDER 0           // Передняя левая - плечо
-#define SERVO_FL_HIP 1                // Передняя левая - бедро
-#define SERVO_FR_SHOULDER 2           // Передняя правая - плечо
-#define SERVO_FR_HIP 3                // Передняя правая - бедро
-#define SERVO_BL_SHOULDER 4           // Задняя левая - плечо
-#define SERVO_BL_HIP 5                // Задняя левая - бедро
-#define SERVO_BR_SHOULDER 6           // Задняя правая - плечо
-#define SERVO_BR_HIP 7                // Задняя правая - бедро
+// Каналы PCA9685 (КАК В ГЛАВНОМ КОДЕ!)
+// Передние ноги (Front)
+#define SERVO_FL_FRONT 2  // Front Left Front
+#define SERVO_FL_REAR  3  // Front Left Rear
+#define SERVO_FR_FRONT 1  // Front Right Front
+#define SERVO_FR_REAR  0  // Front Right Rear
 
-// Имена сервоприводов для вывода
+// Задние ноги (Back)
+#define SERVO_BL_FRONT 4  // Back Left Front
+#define SERVO_BL_REAR  5  // Back Left Rear (ВНИМАНИЕ: канал 8 = индекс 7 в массиве!)
+#define SERVO_BR_FRONT 7  // Back Right Front
+#define SERVO_BR_REAR  6  // Back Right Rear
+
+// Имена сервоприводов для вывода (В ПОРЯДКЕ КАНАЛОВ 0-7!)
 const char* SERVO_NAMES[NUM_SERVOS] = {
-    "FL_SHOULDER",  // 0
-    "FL_HIP",       // 1
-    "FR_SHOULDER",  // 2
-    "FR_HIP",       // 3
-    "BL_SHOULDER",  // 4
-    "BL_HIP",       // 5
-    "BR_SHOULDER",  // 6
-    "BR_HIP"        // 7
+    "CH0",          // 0
+    "FR_REAR",      // 1
+    "FR_FRONT",     // 2
+    "FL_FRONT",     // 3
+    "FL_REAR",      // 4
+    "BR_REAR",      // 5
+    "BR_FRONT",     // 6
+    "BL_FRONT"      // 7
 };
 
 // ==================== КАЛИБРОВКА ====================
