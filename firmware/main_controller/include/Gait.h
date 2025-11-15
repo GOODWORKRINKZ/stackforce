@@ -78,6 +78,11 @@ public:
         phaseOffset = 0;
         lastUpdateTime = millis();
     }
+
+    /**
+     * @brief Установить состояние стабилизации (по умолчанию игнорируется)
+     */
+    virtual void setStabilization(bool) {}
     
     /**
      * @brief Получить название походки

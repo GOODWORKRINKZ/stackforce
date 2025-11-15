@@ -336,8 +336,11 @@ void Robot::update() {
         gaitParams.forward = sbusToPercent(rcValues[RC_CH_FORWARD]) / 100.0;
         gaitParams.turn = sbusToPercent(rcValues[RC_CH_TURN]) / 100.0;
         gaitParams.height = map(rcValues[RC_CH_HEIGHT], RCCHANNEL3_MIN, RCCHANNEL3_MAX, lowestHeight, highestHeight);
-        gaitParams.pitch = pose.pitch;
-        gaitParams.roll = pose.roll;
+        gaitParams.pitch = stabilizationEnabled ? pose.pitch : 0.0f;
+        gaitParams.roll = stabilizationEnabled ? pose.roll : 0.0f;
+        if (currentGait) {
+            currentGait->setStabilization(stabilizationEnabled);
+        }
         gaitParams.speed = bldcData.M0_Vel;  // Скорость из телеметрии моторов
         
         // Получение целевых позиций от походки
