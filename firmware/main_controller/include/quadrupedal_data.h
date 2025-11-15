@@ -19,17 +19,20 @@
 #define RC_CH_ROLL 3        // Канал крена
 
 // Каналы серво на PCA9685 (все 8 подключены к main контроллеру)
-// Передние ноги (Front)
-#define SERVO_FL_FRONT 11  // Front Left Front
-#define SERVO_FL_REAR  10  // Front Left Rear
-#define SERVO_FR_FRONT 0   // Front Right Front
-#define SERVO_FR_REAR  1   // Front Right Rear
+// ВНИМАНИЕ: Робот повернут на 180° относительно гироскопа
+// Физические каналы переназначены под правильную ориентацию
 
-// Задние ноги (Back) - ИСПРАВЛЕНО: BL и BR поменяны местами
-#define SERVO_BL_FRONT 9   // Back Left Front (было 2)
-#define SERVO_BL_REAR  8   // Back Left Rear (было 3)
-#define SERVO_BR_FRONT 2   // Back Right Front (было 9)
-#define SERVO_BR_REAR  3   // Back Right Rear (было 8)
+// Передние ноги (Front) - были задние
+#define SERVO_FL_FRONT 2   // Front Left Front (физически был BR)
+#define SERVO_FL_REAR  3   // Front Left Rear (физически был BR)
+#define SERVO_FR_FRONT 9   // Front Right Front (физически был BL)
+#define SERVO_FR_REAR  8   // Front Right Rear (физически был BL)
+
+// Задние ноги (Back) - были передние
+#define SERVO_BL_FRONT 0   // Back Left Front (физически был FR)
+#define SERVO_BL_REAR  1   // Back Left Rear (физически был FR)
+#define SERVO_BR_FRONT 11  // Back Right Front (физически был FL)
+#define SERVO_BR_REAR  10  // Back Right Rear (физически был FL)
 
 // Режимы работы робота
 #define ROBOTMODE_DISABLE 0
@@ -51,16 +54,17 @@
 #define L6  0    // Дополнительное смещение
 
 // Смещения серво для калибровки (градусы)
-// Откалибровано при высоте 115мм от оси колеса до верхнего серво
-#define SERVO_FL_FRONT_OFFSET 44
-#define SERVO_FL_REAR_OFFSET  5
-#define SERVO_FR_FRONT_OFFSET -22
-#define SERVO_FR_REAR_OFFSET  -13
+// Откалибровано в IK режиме при X=0, Y=115 (после исправления формулы IK!)
+// После поворота робота на 180° офсеты переназначены
+#define SERVO_FL_FRONT_OFFSET -35   // CH2 (физически был BR)
+#define SERVO_FL_REAR_OFFSET  -162  // CH3 (физически был BR)
+#define SERVO_FR_FRONT_OFFSET -150  // CH9 (физически был BL)
+#define SERVO_FR_REAR_OFFSET  -15   // CH8 (физически был BL)
 
-#define SERVO_BL_FRONT_OFFSET -45  // Поменяны местами BL ↔ BR
-#define SERVO_BL_REAR_OFFSET  -16
-#define SERVO_BR_FRONT_OFFSET 40
-#define SERVO_BR_REAR_OFFSET  27
+#define SERVO_BL_FRONT_OFFSET -74   // CH0 (физически был FR)
+#define SERVO_BL_REAR_OFFSET  -147  // CH1 (физически был FR)
+#define SERVO_BR_FRONT_OFFSET -108  // CH11 (физически был FL)
+#define SERVO_BR_REAR_OFFSET  -23   // CH10 (физически был FL)
 
 // ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
 extern int RCValue[6];  // Значения каналов RC
