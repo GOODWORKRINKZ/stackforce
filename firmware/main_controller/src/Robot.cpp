@@ -74,7 +74,6 @@ Robot::Robot()
     stabRollIGain(0.0018f),
     pitchZero(0.0f),
     rollZero(0.0f),
-    baselineInitialized(false),
     imuTaskHandle(nullptr),
     controlTaskHandle(nullptr),
     poseMutex(nullptr)
@@ -231,12 +230,6 @@ robotposeparam Robot::readIMU() {
     lpfGyroX = lowPassFilter(newPose.GyroX, lpfGyroX);
     lpfGyroY = lowPassFilter(newPose.GyroY, lpfGyroY);
 
-    if (!baselineInitialized) {
-        pitchZero = lpfPitch;
-        rollZero = lpfRoll;
-        baselineInitialized = true;
-        Serial.println("[ROBOT] IMU baseline captured");
-    }
 
     float correctedPitch = lpfPitch - pitchZero;
     float correctedRoll = lpfRoll - rollZero;
@@ -345,13 +338,6 @@ void Robot::copyPoseAndStab(robotposeparam& poseOut, float& stabPitchOut, float&
     poseOut = pose;
     stabPitchOut = stabPitch;
     stabRollOut = stabRoll;
-}
-
-void Robot::resetStabilizationBaseline() {
-    pitchZero = lpfPitch;
-    rollZero = lpfRoll;
-    baselineInitialized = true;
-    Serial.printf("[ROBOT] Baseline reset: pitchZero=%.2f rollZero=%.2f\n", pitchZero, rollZero);
 }
 
 /**
@@ -512,8 +498,8 @@ void Robot::update() {
         gaitParams.forward = sbusToPercent(rcValues[RC_CH_FORWARD]) / 100.0;
         gaitParams.turn = sbusToPercent(rcValues[RC_CH_TURN]) / 100.0;
         gaitParams.height = map(rcValues[RC_CH_HEIGHT], RCCHANNEL3_MIN, RCCHANNEL3_MAX, lowestHeight, highestHeight);
-        gaitParams.pitch = stabilizationEnabled ? poseSnapshot.pitch : 0.0f;
-        gaitParams.roll = stabilizationEnabled ? poseSnapshot.roll : 0.0f;
+        gaitParams.pitch = stabilizationEnabled ? 0.0f : poseSnapshot.pitch;
+        gaitParams.roll = stabilizationEnabled ? 0.0f : poseSnapshot.roll;
         gaitParams.stabPitch = stabilizationEnabled ? stabPitchSnapshot : 0.0f;
         gaitParams.stabRoll = stabilizationEnabled ? stabRollSnapshot : 0.0f;
         if (currentGait) {

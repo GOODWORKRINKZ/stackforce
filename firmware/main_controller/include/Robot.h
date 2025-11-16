@@ -92,7 +92,6 @@ private:
     float stabRollIGain;
     float pitchZero;
     float rollZero;
-    bool baselineInitialized;
     
     // Приватные методы
     void readRC();                      // Чтение RC
@@ -104,7 +103,6 @@ private:
     void sendToAux();                   // Отправка данных aux контроллеру
     void copyPoseAndStab(robotposeparam& poseOut, float& stabPitchOut, float& stabRollOut);
     void startTasks();
-    void resetStabilizationBaseline();
     static void imuTaskEntry(void* arg);
     static void controlTaskEntry(void* arg);
     void imuTaskLoop();
