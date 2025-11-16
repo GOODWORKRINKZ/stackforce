@@ -5,7 +5,7 @@
 
 #include "Gait.h"
 #include <math.h>
-
+#define constrainValue(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt))) // 限幅函数
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 /**
@@ -90,9 +90,19 @@ static void applyBodyCompensation(GaitTargets& targets, float pitchComp, float r
 GaitTargets StandGait::update(const GaitParams& params) {
     GaitTargets targets(params.height);
     
-    float rollComp = params.stabRoll + params.roll * 0.25f;
-    float pitchComp = params.stabPitch + params.pitch * 0.25f;
-    applyBodyCompensation(targets, pitchComp, rollComp);
+    targets.frontLeft.y  = 110 + -params.stabPitch +  params.stabRoll;
+    targets.frontLeft.y  = constrainValue(targets.frontLeft.y, 70, 150);
+
+    targets.frontRight.y  = 110 + -params.stabPitch -  params.stabRoll;
+    targets.frontRight.y  = constrainValue(targets.frontRight.y, 70, 150);
+
+
+    targets.backLeft.y  = 110 - -params.stabPitch +  params.stabRoll;
+    targets.backLeft.y  = constrainValue(targets.backLeft.y, 70, 150);
+
+    targets.backRight.y  = 110 - -params.stabPitch -  params.stabRoll;
+    targets.backRight.y  = constrainValue(targets.backRight.y, 70, 150);
+    
     return targets;
 }
 

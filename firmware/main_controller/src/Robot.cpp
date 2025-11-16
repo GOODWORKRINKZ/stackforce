@@ -109,6 +109,7 @@ void Robot::init() {
     delay(100);
     // IMU
     imu.init();
+    imu.calGyroOffsets();
     Serial.println("[ROBOT] IMU инициализирован");
 
     // SBUS приемник (библиотека от Денге)
