@@ -78,31 +78,32 @@ static void applyBodyCompensation(GaitTargets& targets, float pitchComp, float r
     }
 
     if (rollComp != 0) {
-        targets.frontLeft.y -= rollComp;
-        targets.backLeft.y -= rollComp;
-        targets.frontRight.y += rollComp;
-        targets.backRight.y += rollComp;
+        auto applyRoll = [&](LegTarget& leg, bool isFront, bool isRight) {
+            float sign = (isFront == isRight) ? 1.0f : -1.0f;
+            leg.y += rollComp * sign;
+        };
+        applyRoll(targets.frontLeft, true, false);
+        applyRoll(targets.frontRight, true, true);
+        applyRoll(targets.backLeft, false, false);
+        applyRoll(targets.backRight, false, true);
     }
 }
 
 // ==================== СТОЙКА (STAND) ====================
 
 GaitTargets StandGait::update(const GaitParams& params) {
-    GaitTargets targets(params.height);
-    
-    targets.frontLeft.y  = 110 - params.stabPitch -  params.stabRoll;
+    float baseHeight = constrainValue(params.height, 70.0f, 150.0f);
+    GaitTargets targets(baseHeight);
+
+    float rollComp = params.stabRoll + params.roll;
+    float pitchComp = params.stabPitch + params.pitch;
+    applyBodyCompensation(targets, pitchComp, rollComp);
+
     targets.frontLeft.y  = constrainValue(targets.frontLeft.y, 70, 150);
-
-    targets.frontRight.y  = 110 - params.stabPitch +  params.stabRoll;
-    targets.frontRight.y  = constrainValue(targets.frontRight.y, 70, 150);
-
-
-    targets.backLeft.y  = 110 + params.stabPitch +  params.stabRoll;
-    targets.backLeft.y  = constrainValue(targets.backLeft.y, 70, 150);
-
-    targets.backRight.y  = 110 + params.stabPitch -  params.stabRoll;
+    targets.frontRight.y = constrainValue(targets.frontRight.y, 70, 150);
+    targets.backLeft.y   = constrainValue(targets.backLeft.y, 70, 150);
     targets.backRight.y  = constrainValue(targets.backRight.y, 70, 150);
-    
+
     return targets;
 }
 

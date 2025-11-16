@@ -74,6 +74,10 @@ Robot::Robot()
     stabRollIGain(0.0018f),
     pitchZero(0.0f),
     rollZero(0.0f),
+    baselineInitialized(false),
+    baselinePitchAccum(0.0f),
+    baselineRollAccum(0.0f),
+    baselineSampleCount(0),
     imuTaskHandle(nullptr),
     controlTaskHandle(nullptr),
     poseMutex(nullptr)
@@ -134,6 +138,7 @@ void Robot::init() {
     setupCAN();
     
     startTasks();
+    resetStabilizationBaseline();
 
     // Установка начального режима
     motion.mode = ROBOTMODE_MOTION;
@@ -231,6 +236,18 @@ robotposeparam Robot::readIMU() {
     lpfGyroX = lowPassFilter(newPose.GyroX, lpfGyroX);
     lpfGyroY = lowPassFilter(newPose.GyroY, lpfGyroY);
 
+
+    if (!baselineInitialized) {
+        baselinePitchAccum += lpfPitch;
+        baselineRollAccum += lpfRoll;
+        baselineSampleCount++;
+        if (baselineSampleCount >= 200) {
+            pitchZero = baselinePitchAccum / baselineSampleCount;
+            rollZero = baselineRollAccum / baselineSampleCount;
+            baselineInitialized = true;
+            Serial.printf("[ROBOT] IMU baseline captured: pitchZero=%.2f rollZero=%.2f\n", pitchZero, rollZero);
+        }
+    }
 
     float correctedPitch = lpfPitch - pitchZero;
     float correctedRoll = lpfRoll - rollZero;
@@ -339,6 +356,14 @@ void Robot::copyPoseAndStab(robotposeparam& poseOut, float& stabPitchOut, float&
     poseOut = pose;
     stabPitchOut = stabPitch;
     stabRollOut = stabRoll;
+}
+
+void Robot::resetStabilizationBaseline() {
+    baselineInitialized = false;
+    baselinePitchAccum = 0.0f;
+    baselineRollAccum = 0.0f;
+    baselineSampleCount = 0;
+    Serial.println("[ROBOT] IMU baseline reset, hold robot level");
 }
 
 /**

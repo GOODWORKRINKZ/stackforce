@@ -92,6 +92,10 @@ private:
     float stabRollIGain;
     float pitchZero;
     float rollZero;
+    bool baselineInitialized;
+    float baselinePitchAccum;
+    float baselineRollAccum;
+    uint16_t baselineSampleCount;
     
     // Приватные методы
     void readRC();                      // Чтение RC
@@ -165,6 +169,8 @@ public:
      * @param y Координата Y (мм)
      */
     void moveAllLegsTo(float x, float y);
+
+    void resetStabilizationBaseline();
     
     /**
      * @brief Переместить переднюю левую ногу
