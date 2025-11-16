@@ -14,6 +14,7 @@
 #include "SF_IMU.h"
 #include "pid.h"
 #include "sbus.h"
+#include "KalmanFilter.h"
 #include "quadrupedal_data.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -66,6 +67,7 @@ private:
     int m0Dir, m1Dir;                   // Направления моторов
     float targetSpeed;                  // Целевая скорость
     float stabRoll, stabPitch;          // Накопленная коррекция
+    float lpfStabRoll, lpfStabPitch;    // Отфильтрованная коррекция PID
     
     // Параметры управления
     float kpY;                          // Коэффициент для плавного изменения высоты
@@ -84,6 +86,11 @@ private:
     float lpfRoll;
     float lpfGyroX;
     float lpfGyroY;
+    
+    // Фильтры Калмана для углов
+    KalmanFilter kalmanPitch;
+    KalmanFilter kalmanRoll;
+    unsigned long lastKalmanUpdate;
 
     float pitchZero;
     float rollZero;

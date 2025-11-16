@@ -44,8 +44,8 @@ Robot::Robot()
       legBR(LegPosition::BACK_RIGHT, &servos),
     currentGait(&standGait),
     pidVelocity(0.2, 0, 0, 1000, 50),
-    pidPitch(1.2f, 0.05f, 0.15f, 200.0f, 50.0f),
-    pidRoll(1.2f, 0.05f, 0.15f, 200.0f, 50.0f),
+    pidPitch(0.6f, 0.08f, 0.4f, 60.0f, 60.0f),
+    pidRoll(0.6f, 0.08f, 0.4f, 60.0f, 60.0f),
       stabilizationEnabled(true),
       motorsEnabled(false),
       ikEnabled(true),
@@ -55,6 +55,8 @@ Robot::Robot()
       targetSpeed(0),
       stabRoll(0),
       stabPitch(0),
+      lpfStabRoll(0),
+      lpfStabPitch(0),
       kpY(0.1),
       kpX(1.1),
       kpRoll(0.05),
@@ -68,6 +70,9 @@ Robot::Robot()
     lpfRoll(0.0f),
     lpfGyroX(0.0f),
     lpfGyroY(0.0f),
+    kalmanPitch(0.001f, 0.15f, 1.0f),
+    kalmanRoll(0.001f, 0.15f, 1.0f),
+    lastKalmanUpdate(0),
     pitchZero(0.0f),
     rollZero(0.0f),
     baselineInitialized(false),
@@ -245,20 +250,36 @@ float Robot::lowPassFilter(float current, float previous) const {
 robotposeparam Robot::readIMU() {
     imu.update();
     robotposeparam newPose;
+    
     // IMU is mounted with Y forward and X to the right, so copy Deng's mapping
-    newPose.pitch = imu.angle[0];
-    newPose.roll = imu.angle[1];
+    float rawPitch = imu.angle[0];
+    float rawRoll = imu.angle[1];
     newPose.yaw = imu.angle[2];
     newPose.GyroX = imu.gyro[1];
     newPose.GyroY = imu.gyro[0];
     newPose.GyroZ = imu.gyro[2];
 
-    lpfPitch = lowPassFilter(newPose.pitch, lpfPitch);
-    lpfRoll = lowPassFilter(newPose.roll, lpfRoll);
+    // Применяем LPF к гироскопу для уменьшения шума
     lpfGyroX = lowPassFilter(newPose.GyroX, lpfGyroX);
     lpfGyroY = lowPassFilter(newPose.GyroY, lpfGyroY);
 
+    // Вычисляем dt для фильтра Калмана
+    unsigned long now = micros();
+    float dt = lastKalmanUpdate > 0 ? (now - lastKalmanUpdate) / 1000000.0f : 0.001f;
+    lastKalmanUpdate = now;
+    
+    // Ограничиваем dt на случай переполнения или первого запуска
+    if (dt > 0.1f || dt <= 0) dt = 0.001f;
 
+    // Применяем фильтр Калмана (объединяет акселерометр и гироскоп)
+    float kalmanPitchValue = kalmanPitch.update(rawPitch, newPose.GyroX, dt);
+    float kalmanRollValue = kalmanRoll.update(rawRoll, newPose.GyroY, dt);
+
+    // Дополнительно применяем легкий LPF для сглаживания
+    lpfPitch = lowPassFilter(kalmanPitchValue, lpfPitch);
+    lpfRoll = lowPassFilter(kalmanRollValue, lpfRoll);
+
+    // Калибровка нулевой точки
     if (!baselineInitialized) {
         baselinePitchAccum += lpfPitch;
         baselineRollAccum += lpfRoll;
@@ -271,6 +292,7 @@ robotposeparam Robot::readIMU() {
         }
     }
 
+    // Применяем коррекцию нулевой точки
     float correctedPitch = lpfPitch - pitchZero;
     float correctedRoll = lpfRoll - rollZero;
     newPose.pitch = correctedPitch;
@@ -314,22 +336,27 @@ void Robot::updateStabilization(const robotposeparam& poseData) {
     }
 
     // PID вычисляет коррекцию автоматически (P + I + D)
-    float newStabPitch = pidPitch(pitchError);
-    float newStabRoll = pidRoll(rollError);
+    float rawStabPitch = pidPitch(pitchError);
+    float rawStabRoll = pidRoll(rollError);
 
     // Дополнительное ограничение
-    newStabPitch = _constrain(newStabPitch, -25.0f, 25.0f);
-    newStabRoll = _constrain(newStabRoll, -rollLimit, rollLimit);
+    rawStabPitch = _constrain(rawStabPitch, -25.0f, 25.0f);
+    rawStabRoll = _constrain(rawStabRoll, -rollLimit, rollLimit);
+
+    // Применяем LPF для сглаживания выхода PID (убирает резкие рывки)
+    const float PID_FILTER_ALPHA = 0.15f;  // Коэффициент фильтра (0.15 = плавно)
+    lpfStabPitch = lpfStabPitch * (1.0f - PID_FILTER_ALPHA) + rawStabPitch * PID_FILTER_ALPHA;
+    lpfStabRoll = lpfStabRoll * (1.0f - PID_FILTER_ALPHA) + rawStabRoll * PID_FILTER_ALPHA;
 
     if (poseMutex) {
         if (xSemaphoreTake(poseMutex, portMAX_DELAY) == pdTRUE) {
-            stabPitch = newStabPitch;
-            stabRoll = newStabRoll;
+            stabPitch = lpfStabPitch;
+            stabRoll = lpfStabRoll;
             xSemaphoreGive(poseMutex);
         }
     } else {
-        stabPitch = newStabPitch;
-        stabRoll = newStabRoll;
+        stabPitch = lpfStabPitch;
+        stabRoll = lpfStabRoll;
     }
 }
 

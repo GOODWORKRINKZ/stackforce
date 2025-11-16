@@ -71,19 +71,17 @@ static void applyBodyCompensation(GaitTargets& targets, float pitchComp, float r
     }
 
     if (pitchComp != 0) {
-        // Pitch compensation: nose up = front legs down, back legs up
-        targets.frontLeft.y -= pitchComp;
-        targets.frontRight.y -= pitchComp;
-        targets.backLeft.y += pitchComp;
-        targets.backRight.y += pitchComp;
+        targets.frontLeft.y += pitchComp;
+        targets.frontRight.y += pitchComp;
+        targets.backLeft.y -= pitchComp;
+        targets.backRight.y -= pitchComp;
     }
 
     if (rollComp != 0) {
-        // Roll compensation: left tilt = left legs down, right legs up
-        targets.frontLeft.y -= rollComp;
-        targets.backLeft.y -= rollComp;
-        targets.frontRight.y += rollComp;
-        targets.backRight.y += rollComp;
+        targets.frontLeft.y += rollComp;
+        targets.backLeft.y += rollComp;
+        targets.frontRight.y -= rollComp;
+        targets.backRight.y -= rollComp;
     }
 }
 
@@ -93,8 +91,21 @@ GaitTargets StandGait::update(const GaitParams& params) {
     float baseHeight = constrainValue(params.height, 70.0f, 150.0f);
     GaitTargets targets(baseHeight);
 
-    float rollComp = params.stabRoll + params.roll;
-    float pitchComp = params.stabPitch + params.pitch;
+    // Логика компенсации зависит от режима стабилизации
+    float rollComp, pitchComp;
+    
+    if (stabilizationEnabled) {
+        // Режим СТАБИЛИЗАЦИИ: используем только PID коррекцию, игнорируем сырые углы
+        // PID активно держит робота горизонтально
+        rollComp = params.stabRoll;
+        pitchComp = params.stabPitch;
+    } else {
+        // Режим КОМПЕНСАЦИИ: используем только сырые углы, следуем за наклоном корпуса
+        // Робот адаптируется к наклону поверхности
+        rollComp = params.roll;
+        pitchComp = params.pitch;
+    }
+    
     applyBodyCompensation(targets, pitchComp, rollComp);
 
     targets.frontLeft.y  = constrainValue(targets.frontLeft.y, 70, 150);
