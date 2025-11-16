@@ -42,10 +42,10 @@ Robot::Robot()
       legFR(LegPosition::FRONT_RIGHT, &servos),
       legBL(LegPosition::BACK_LEFT, &servos),
       legBR(LegPosition::BACK_RIGHT, &servos),
-      currentGait(&standGait),
-      pidVelocity(0.2, 0, 0, 1000, 50),
-      pidPitch(0.38, 0, 0, 1000, 50),
-      pidRoll(0.05, 0, 0, 1000, 50),
+    currentGait(&standGait),
+    pidVelocity(0.2, 0, 0, 1000, 50),
+    pidPitch(0.6, 0.01, 0, 2000, 60),
+    pidRoll(0.25, 0.01, 0, 2000, 60),
       stabilizationEnabled(true),
       motorsEnabled(false),
       ikEnabled(true),
@@ -59,10 +59,22 @@ Robot::Robot()
       kpX(1.1),
       kpRoll(0.05),
       turnKp(0.1),
-      rollLimit(20),
-      legDistance(100),
-      lowestHeight(ROBOT_LOWEST_FOR_MOT),
+    rollLimit(35),
+    legDistance(100),
+    lowestHeight(ROBOT_LOWEST_FOR_MOT),
     highestHeight(ROBOT_HIGHEST),
+    imuFilterAlpha(0.03f),
+    lpfPitch(0.0f),
+    lpfRoll(0.0f),
+    lpfGyroX(0.0f),
+    lpfGyroY(0.0f),
+    stabPitchPGain(6.5f),
+    stabPitchIGain(-0.0016f),
+    stabRollPGain(-1.5f),
+    stabRollIGain(0.0018f),
+    pitchZero(0.0f),
+    rollZero(0.0f),
+    baselineInitialized(false),
     imuTaskHandle(nullptr),
     controlTaskHandle(nullptr),
     poseMutex(nullptr)
@@ -199,15 +211,37 @@ void Robot::readRC() {
 /**
  * @brief Получение данных MPU6050
  */
+float Robot::lowPassFilter(float current, float previous) const {
+    return imuFilterAlpha * current + (1.0f - imuFilterAlpha) * previous;
+}
+
 robotposeparam Robot::readIMU() {
     imu.update();
     robotposeparam newPose;
-    newPose.pitch = -imu.angle[0];
+    // IMU is mounted with Y forward and X to the right, so copy Deng's mapping
+    newPose.pitch = imu.angle[0];
     newPose.roll = imu.angle[1];
     newPose.yaw = imu.angle[2];
     newPose.GyroX = imu.gyro[1];
-    newPose.GyroY = -imu.gyro[0];
-    newPose.GyroZ = -imu.gyro[2];
+    newPose.GyroY = imu.gyro[0];
+    newPose.GyroZ = imu.gyro[2];
+
+    lpfPitch = lowPassFilter(newPose.pitch, lpfPitch);
+    lpfRoll = lowPassFilter(newPose.roll, lpfRoll);
+    lpfGyroX = lowPassFilter(newPose.GyroX, lpfGyroX);
+    lpfGyroY = lowPassFilter(newPose.GyroY, lpfGyroY);
+
+    if (!baselineInitialized) {
+        pitchZero = lpfPitch;
+        rollZero = lpfRoll;
+        baselineInitialized = true;
+        Serial.println("[ROBOT] IMU baseline captured");
+    }
+
+    float correctedPitch = lpfPitch - pitchZero;
+    float correctedRoll = lpfRoll - rollZero;
+    newPose.pitch = correctedPitch;
+    newPose.roll = correctedRoll;
 
     if (poseMutex) {
         if (xSemaphoreTake(poseMutex, portMAX_DELAY) == pdTRUE) {
@@ -246,12 +280,15 @@ void Robot::updateStabilization(const robotposeparam& poseData) {
     float newStabRoll = 0.0f;
 
     if (stabilizationEnabled) {
-        float pitchCorrection = pidPitch(0 - poseData.pitch);
-        float rollCorrection = pidRoll(0 - poseData.roll);
-        newStabPitch = currentStabPitch + pitchCorrection * 0.01f;
-        newStabRoll = currentStabRoll + rollCorrection * 0.01f;
-        newStabPitch = _constrain(newStabPitch, -20, 20);
+        // Алгоритм Денге: targetGyro = (0 - lpf_angle) * P
+        // StableHeightAdjust.X = StableHeightAdjust.X - I * (targetGyro - gyro)
+        float targetGyroY = (0.0f - poseData.roll) * stabRollPGain;
+        newStabRoll = currentStabRoll - stabRollIGain * (targetGyroY - lpfGyroY);
         newStabRoll = _constrain(newStabRoll, -rollLimit, rollLimit);
+
+        float targetGyroX = (0.0f - poseData.pitch) * stabPitchPGain;
+        newStabPitch = currentStabPitch - stabPitchIGain * (targetGyroX - lpfGyroX);
+        newStabPitch = _constrain(newStabPitch, -25.0f, 25.0f);
     }
 
     if (poseMutex) {
@@ -308,6 +345,13 @@ void Robot::copyPoseAndStab(robotposeparam& poseOut, float& stabPitchOut, float&
     poseOut = pose;
     stabPitchOut = stabPitch;
     stabRollOut = stabRoll;
+}
+
+void Robot::resetStabilizationBaseline() {
+    pitchZero = lpfPitch;
+    rollZero = lpfRoll;
+    baselineInitialized = true;
+    Serial.printf("[ROBOT] Baseline reset: pitchZero=%.2f rollZero=%.2f\n", pitchZero, rollZero);
 }
 
 /**
@@ -499,11 +543,6 @@ void Robot::update() {
         unsigned long now = millis();
         Serial.printf("[ROBOT][%lu ms] Gait: %s | Pitch: %.1f Roll: %.1f | FL: %.1f FR: %.1f BL: %.1f BR: %.1f\n",
                       now,
-                      currentGait ? currentGait->getName().c_str() : "None",
-                      poseSnapshot.pitch, poseSnapshot.roll,
-                      legFL.getY(), legFR.getY(),
-                      legBL.getY(), legBR.getY());
-        Serial.printf("[ROBOT] Gait: %s | Pitch: %.1f Roll: %.1f | FL: %.1f FR: %.1f BL: %.1f BR: %.1f\n",
                       currentGait ? currentGait->getName().c_str() : "None",
                       poseSnapshot.pitch, poseSnapshot.roll,
                       legFL.getY(), legFR.getY(),

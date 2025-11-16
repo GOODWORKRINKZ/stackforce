@@ -77,16 +77,34 @@ private:
     
     uint8_t lowestHeight;               // Минимальная высота
     uint8_t highestHeight;              // Максимальная высота
+
+    // Фильтрация IMU
+    float imuFilterAlpha;
+    float lpfPitch;
+    float lpfRoll;
+    float lpfGyroX;
+    float lpfGyroY;
+
+    // Коэффициенты стабилизации (по примеру Денге)
+    float stabPitchPGain;
+    float stabPitchIGain;
+    float stabRollPGain;
+    float stabRollIGain;
+    float pitchZero;
+    float rollZero;
+    bool baselineInitialized;
     
     // Приватные методы
     void readRC();                      // Чтение RC
     robotposeparam readIMU();           // Чтение IMU
+    float lowPassFilter(float current, float previous) const;
     void updateStabilization(const robotposeparam& poseData); // Обновление стабилизации
     void updateMotors();                // Обновление моторов
     void setupCAN();                    // Инициализация CAN
     void sendToAux();                   // Отправка данных aux контроллеру
     void copyPoseAndStab(robotposeparam& poseOut, float& stabPitchOut, float& stabRollOut);
     void startTasks();
+    void resetStabilizationBaseline();
     static void imuTaskEntry(void* arg);
     static void controlTaskEntry(void* arg);
     void imuTaskLoop();

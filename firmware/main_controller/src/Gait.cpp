@@ -69,10 +69,20 @@ static void applyBodyCompensation(GaitTargets& targets, float pitchComp, float r
     if (pitchComp == 0 && rollComp == 0) {
         return;
     }
-    targets.frontLeft.y -= pitchComp + rollComp;
-    targets.frontRight.y -= pitchComp - rollComp;
-    targets.backLeft.y += pitchComp + rollComp;
-    targets.backRight.y += pitchComp - rollComp;
+
+    if (pitchComp != 0) {
+        targets.frontLeft.y -= pitchComp;
+        targets.frontRight.y -= pitchComp;
+        targets.backLeft.y += pitchComp;
+        targets.backRight.y += pitchComp;
+    }
+
+    if (rollComp != 0) {
+        targets.frontLeft.y -= rollComp;
+        targets.backLeft.y -= rollComp;
+        targets.frontRight.y += rollComp;
+        targets.backRight.y += rollComp;
+    }
 }
 
 // ==================== СТОЙКА (STAND) ====================
@@ -80,18 +90,8 @@ static void applyBodyCompensation(GaitTargets& targets, float pitchComp, float r
 GaitTargets StandGait::update(const GaitParams& params) {
     GaitTargets targets(params.height);
     
-    if (stabilizationEnabled) {
-        float rollCompensation = params.stabRoll + params.roll * 0.3f;
-        float pitchCompensation = params.stabPitch + params.pitch * 0.3f;
-        
-        targets.frontLeft.y = params.height - pitchCompensation + rollCompensation;
-        targets.frontRight.y = params.height - pitchCompensation - rollCompensation;
-        targets.backLeft.y = params.height + pitchCompensation + rollCompensation;
-        targets.backRight.y = params.height + pitchCompensation - rollCompensation;
-    }
-    
-    float rollComp = params.stabRoll + params.roll * 0.15f;
-    float pitchComp = params.stabPitch + params.pitch * 0.15f;
+    float rollComp = params.stabRoll + params.roll * 0.25f;
+    float pitchComp = params.stabPitch + params.pitch * 0.25f;
     applyBodyCompensation(targets, pitchComp, rollComp);
     return targets;
 }
