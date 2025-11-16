@@ -44,8 +44,8 @@ Robot::Robot()
       legBR(LegPosition::BACK_RIGHT, &servos),
     currentGait(&standGait),
     pidVelocity(0.2, 0, 0, 1000, 50),
-    pidPitch(0.6, 0.01, 0, 2000, 60),
-    pidRoll(0.25, 0.01, 0, 2000, 60),
+    pidPitch(0.5f, 0.0018f, 0.0f, 10000.0f, 50.0f),
+    pidRoll(0.5f, 0.0018f, 0.0f, 10000.0f, 50.0f),
       stabilizationEnabled(true),
       motorsEnabled(false),
       ikEnabled(true),
@@ -171,6 +171,32 @@ bool Robot::setGait(const String& gaitName) {
     return true;
 }
 
+void Robot::setStabilization(bool enabled) {
+    if (stabilizationEnabled == enabled) {
+        return;
+    }
+
+    stabilizationEnabled = enabled;
+
+    pidPitch.reset();
+    pidRoll.reset();
+
+    auto setCorrections = [&](float pitchValue, float rollValue) {
+        if (poseMutex) {
+            if (xSemaphoreTake(poseMutex, portMAX_DELAY) == pdTRUE) {
+                stabPitch = pitchValue;
+                stabRoll = rollValue;
+                xSemaphoreGive(poseMutex);
+                return;
+            }
+        }
+        stabPitch = pitchValue;
+        stabRoll = rollValue;
+    };
+
+    setCorrections(0.0f, 0.0f);
+}
+
 /**
  * @brief Чтение значений с SBUS приемника
  */
@@ -201,7 +227,7 @@ void Robot::readRC() {
         // STAB канал (CH8) - включение/выключение стабилизации
         bool stabState = (rcValues[RC_CH_STAB] > 1500);
         if (stabState != stabilizationEnabled) {
-            stabilizationEnabled = stabState;
+            setStabilization(stabState);
             Serial.printf("[ROBOT] Стабилизация %s (STAB CH8 = %d)\n",
                           stabilizationEnabled ? "ВКЛЮЧЕНА" : "ВЫКЛЮЧЕНА",
                           rcValues[RC_CH_STAB]);
@@ -266,6 +292,10 @@ robotposeparam Robot::readIMU() {
  * @brief Обновление стабилизации
  */
 void Robot::updateStabilization(const robotposeparam& poseData) {
+    if (!stabilizationEnabled) {
+        return;
+    }
+
     float currentStabPitch = 0.0f;
     float currentStabRoll = 0.0f;
 
@@ -286,17 +316,15 @@ void Robot::updateStabilization(const robotposeparam& poseData) {
     float newStabPitch = 0.0f;
     float newStabRoll = 0.0f;
 
-    if (stabilizationEnabled) {
-        // Алгоритм Денге: targetGyro = (0 - lpf_angle) * P
-        // StableHeightAdjust.X = StableHeightAdjust.X - I * (targetGyro - gyro)
-        float targetGyroY = (0.0f - poseData.roll) * pidRoll.P;
-        newStabRoll = currentStabRoll - pidRoll.I * (targetGyroY - lpfGyroY);
-        newStabRoll = _constrain(newStabRoll, -rollLimit, rollLimit);
+    // Алгоритм Денге: targetGyro = (0 - lpf_angle) * P
+    // StableHeightAdjust.X = StableHeightAdjust.X - I * (targetGyro - gyro)
+    float targetGyroY = (0.0f - poseData.roll) * pidRoll.P;
+    newStabRoll = currentStabRoll - pidRoll.I * (targetGyroY - lpfGyroY);
+    newStabRoll = _constrain(newStabRoll, -rollLimit, rollLimit);
 
-        float targetGyroX = (0.0f - poseData.pitch) * pidPitch.P;
-        newStabPitch = currentStabPitch - pidPitch.I * (targetGyroX - lpfGyroX);
-        newStabPitch = _constrain(newStabPitch, -25.0f, 25.0f);
-    }
+    float targetGyroX = (0.0f - poseData.pitch) * pidPitch.P;
+    newStabPitch = currentStabPitch - pidPitch.I * (targetGyroX - lpfGyroX);
+    newStabPitch = _constrain(newStabPitch, -25.0f, 25.0f);
 
     if (poseMutex) {
         if (xSemaphoreTake(poseMutex, portMAX_DELAY) == pdTRUE) {
@@ -520,8 +548,10 @@ void Robot::update() {
         gaitParams.forward = sbusToPercent(rcValues[RC_CH_FORWARD]) / 100.0;
         gaitParams.turn = sbusToPercent(rcValues[RC_CH_TURN]) / 100.0;
         gaitParams.height = map(rcValues[RC_CH_HEIGHT], RCCHANNEL3_MIN, RCCHANNEL3_MAX, lowestHeight, highestHeight);
-        gaitParams.pitch = stabilizationEnabled ? 0.0f : poseSnapshot.pitch;
-        gaitParams.roll = stabilizationEnabled ? 0.0f : poseSnapshot.roll;
+        // Всегда передаем углы наклона для правильной геометрии
+        gaitParams.pitch =stabilizationEnabled? poseSnapshot.pitch:0.0f;
+        gaitParams.roll = stabilizationEnabled ? poseSnapshot.roll : 0.0f;
+        // Коррекции стабилизации применяются дополнительно
         gaitParams.stabPitch = stabilizationEnabled ? stabPitchSnapshot : 0.0f;
         gaitParams.stabRoll = stabilizationEnabled ? stabRollSnapshot : 0.0f;
         if (currentGait) {
@@ -549,10 +579,11 @@ void Robot::update() {
     // Отправка данных на aux контроллер
     if (loopCnt % 100 == 0) {  // Каждые 100 циклов
         unsigned long now = millis();
-        Serial.printf("[ROBOT][%lu ms] Gait: %s | Pitch: %.1f Roll: %.1f | FL: %.1f FR: %.1f BL: %.1f BR: %.1f\n",
+        Serial.printf("[ROBOT][%lu ms] Gait: %s | Pitch: %.1f (stab: %.1f) Roll: %.1f (stab: %.1f) | FL: %.1f FR: %.1f BL: %.1f BR: %.1f\n",
                       now,
                       currentGait ? currentGait->getName().c_str() : "None",
-                      poseSnapshot.pitch, poseSnapshot.roll,
+                      poseSnapshot.pitch, stabPitchSnapshot,
+                      poseSnapshot.roll, stabRollSnapshot,
                       legFL.getY(), legFR.getY(),
                       legBL.getY(), legBR.getY());
     }

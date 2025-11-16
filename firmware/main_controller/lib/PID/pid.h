@@ -27,6 +27,8 @@ public:
     float output_ramp; //!< Maximum speed of change of the output value
     float limit; //!< Maximum output value
 
+    void reset();
+
 protected:
     float error_prev; //!< last tracking error value
     float output_prev;  //!< last pid output value

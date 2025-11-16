@@ -71,14 +71,15 @@ static void applyBodyCompensation(GaitTargets& targets, float pitchComp, float r
     }
 
     if (pitchComp != 0) {
+        // Pitch compensation: nose up = front legs down, back legs up
         targets.frontLeft.y -= pitchComp;
         targets.frontRight.y -= pitchComp;
         targets.backLeft.y += pitchComp;
         targets.backRight.y += pitchComp;
     }
 
-    if (rollComp != 0) {        // Apply opposing offsets per side so roll feedback stabilizes instead of amplifying
-        // Roll should only differentiate left/right pairs; adjust both legs per side equally
+    if (rollComp != 0) {
+        // Roll compensation: left tilt = left legs down, right legs up
         targets.frontLeft.y -= rollComp;
         targets.backLeft.y -= rollComp;
         targets.frontRight.y += rollComp;

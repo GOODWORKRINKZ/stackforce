@@ -126,7 +126,7 @@ public:
     /**
      * @brief Включить/выключить стабилизацию
      */
-    void setStabilization(bool enabled) { stabilizationEnabled = enabled; }
+    void setStabilization(bool enabled);
     
     /**
      * @brief Включить/выключить моторы
