@@ -44,8 +44,8 @@ Robot::Robot()
       legBR(LegPosition::BACK_RIGHT, &servos),
     currentGait(&standGait),
     pidVelocity(0.2, 0, 0, 1000, 50),
-    pidPitch(0.5f, 0.0018f, 0.0f, 10000.0f, 50.0f),
-    pidRoll(0.5f, 0.0018f, 0.0f, 10000.0f, 50.0f),
+    pidPitch(1.2f, 0.05f, 0.15f, 200.0f, 50.0f),
+    pidRoll(1.2f, 0.05f, 0.15f, 200.0f, 50.0f),
       stabilizationEnabled(true),
       motorsEnabled(false),
       ikEnabled(true),
@@ -296,35 +296,30 @@ void Robot::updateStabilization(const robotposeparam& poseData) {
         return;
     }
 
-    float currentStabPitch = 0.0f;
-    float currentStabRoll = 0.0f;
+    // Мёртвая зона для устранения дребезга (deadband)
+    const float PITCH_DEADBAND = 2.5f;  // градусы
+    const float ROLL_DEADBAND = 2.5f;   // градусы
 
-    if (poseMutex) {
-        if (xSemaphoreTake(poseMutex, portMAX_DELAY) == pdTRUE) {
-            currentStabPitch = stabPitch;
-            currentStabRoll = stabRoll;
-            xSemaphoreGive(poseMutex);
-        } else {
-            currentStabPitch = stabPitch;
-            currentStabRoll = stabRoll;
-        }
-    } else {
-        currentStabPitch = stabPitch;
-        currentStabRoll = stabRoll;
+    // Используем полноценный PID регулятор
+    // Ошибка = текущий угол (цель = 0, удержание горизонта)
+    float pitchError = -poseData.pitch;  // Инвертируем для правильного направления коррекции
+    float rollError = -poseData.roll;
+
+    // Применяем deadband - если отклонение меньше порога, считаем его нулевым
+    if (abs(pitchError) < PITCH_DEADBAND) {
+        pitchError = 0.0f;
+    }
+    if (abs(rollError) < ROLL_DEADBAND) {
+        rollError = 0.0f;
     }
 
-    float newStabPitch = 0.0f;
-    float newStabRoll = 0.0f;
+    // PID вычисляет коррекцию автоматически (P + I + D)
+    float newStabPitch = pidPitch(pitchError);
+    float newStabRoll = pidRoll(rollError);
 
-    // Алгоритм Денге: targetGyro = (0 - lpf_angle) * P
-    // StableHeightAdjust.X = StableHeightAdjust.X - I * (targetGyro - gyro)
-    float targetGyroY = (0.0f - poseData.roll) * pidRoll.P;
-    newStabRoll = currentStabRoll - pidRoll.I * (targetGyroY - lpfGyroY);
-    newStabRoll = _constrain(newStabRoll, -rollLimit, rollLimit);
-
-    float targetGyroX = (0.0f - poseData.pitch) * pidPitch.P;
-    newStabPitch = currentStabPitch - pidPitch.I * (targetGyroX - lpfGyroX);
+    // Дополнительное ограничение
     newStabPitch = _constrain(newStabPitch, -25.0f, 25.0f);
+    newStabRoll = _constrain(newStabRoll, -rollLimit, rollLimit);
 
     if (poseMutex) {
         if (xSemaphoreTake(poseMutex, portMAX_DELAY) == pdTRUE) {
