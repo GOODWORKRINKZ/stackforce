@@ -44,8 +44,8 @@ Robot::Robot()
       legBR(LegPosition::BACK_RIGHT, &servos),
     currentGait(&standGait),
     pidVelocity(0.2, 0, 0, 1000, 50),
-    pidPitch(0.6f, 0.08f, 0.4f, 60.0f, 60.0f),
-    pidRoll(0.6f, 0.08f, 0.4f, 60.0f, 60.0f),
+    pidPitch(10.0f, 5.08f, 3.4f, 100.0f, 35.0f),
+    pidRoll(10.0f, 5.08f, 3.4f, 100.0f, 35.0f),
       stabilizationEnabled(true),
       motorsEnabled(false),
       ikEnabled(true),
@@ -340,11 +340,11 @@ void Robot::updateStabilization(const robotposeparam& poseData) {
     float rawStabRoll = pidRoll(rollError);
 
     // Дополнительное ограничение
-    rawStabPitch = _constrain(rawStabPitch, -25.0f, 25.0f);
+    rawStabPitch = _constrain(rawStabPitch, -rollLimit, rollLimit);
     rawStabRoll = _constrain(rawStabRoll, -rollLimit, rollLimit);
 
     // Применяем LPF для сглаживания выхода PID (убирает резкие рывки)
-    const float PID_FILTER_ALPHA = 0.15f;  // Коэффициент фильтра (0.15 = плавно)
+    const float PID_FILTER_ALPHA = 0.03f;  // Коэффициент фильтра (0.15 = плавно)
     lpfStabPitch = lpfStabPitch * (1.0f - PID_FILTER_ALPHA) + rawStabPitch * PID_FILTER_ALPHA;
     lpfStabRoll = lpfStabRoll * (1.0f - PID_FILTER_ALPHA) + rawStabRoll * PID_FILTER_ALPHA;
 
