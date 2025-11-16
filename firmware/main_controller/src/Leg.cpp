@@ -111,16 +111,6 @@ bool Leg::moveTo(float x, float y) {
     }
     targetY = _constrain(targetY, ROBOT_LOWEST_FOR_MOT, ROBOT_HIGHEST);
 
-    if (targetChanged) {
-        if (isFrontLeg) {
-            Serial.printf("[LEG][%d] target -> X=%.1f Y=%.1f (adjY=%.1f) (prev X=%.1f Y=%.1f)\n",
-                          static_cast<int>(position), x, y, targetY, prevX, prevY);
-        } else {
-            Serial.printf("[LEG][%d] target -> X=%.1f Y=%.1f (prev X=%.1f Y=%.1f)\n",
-                          static_cast<int>(position), x, y, prevX, prevY);
-        }
-    }
-
     float alpha, beta;
     
     // Вычислить обратную кинематику
@@ -153,17 +143,6 @@ bool Leg::moveTo(float x, float y) {
     // Сохранение текущей позиции
     currentX = x;
     currentY = y;
-
-    if (targetChanged) {
-        Serial.printf("[LEG][%d] IK alpha=%.1fdeg beta=%.1fdeg | servoF(ch%d)=%d servoR(ch%d)=%d\n",
-                      static_cast<int>(position),
-                      (alpha / (2 * PI)) * 360.0f,
-                      (beta / (2 * PI)) * 360.0f,
-                      servoFrontChannel,
-                      servoFrontAngle + servoFrontOffset,
-                      servoRearChannel,
-                      servoRearAngle + servoRearOffset);
-    }
     
     return true;
 }

@@ -77,15 +77,12 @@ static void applyBodyCompensation(GaitTargets& targets, float pitchComp, float r
         targets.backRight.y += pitchComp;
     }
 
-    if (rollComp != 0) {
-        auto applyRoll = [&](LegTarget& leg, bool isFront, bool isRight) {
-            float sign = (isFront == isRight) ? 1.0f : -1.0f;
-            leg.y += rollComp * sign;
-        };
-        applyRoll(targets.frontLeft, true, false);
-        applyRoll(targets.frontRight, true, true);
-        applyRoll(targets.backLeft, false, false);
-        applyRoll(targets.backRight, false, true);
+    if (rollComp != 0) {        // Apply opposing offsets per side so roll feedback stabilizes instead of amplifying
+        // Roll should only differentiate left/right pairs; adjust both legs per side equally
+        targets.frontLeft.y -= rollComp;
+        targets.backLeft.y -= rollComp;
+        targets.frontRight.y += rollComp;
+        targets.backRight.y += rollComp;
     }
 }
 

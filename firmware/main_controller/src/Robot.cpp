@@ -68,10 +68,6 @@ Robot::Robot()
     lpfRoll(0.0f),
     lpfGyroX(0.0f),
     lpfGyroY(0.0f),
-    stabPitchPGain(6.5f),
-    stabPitchIGain(-0.0016f),
-    stabRollPGain(-1.5f),
-    stabRollIGain(0.0018f),
     pitchZero(0.0f),
     rollZero(0.0f),
     baselineInitialized(false),
@@ -293,12 +289,12 @@ void Robot::updateStabilization(const robotposeparam& poseData) {
     if (stabilizationEnabled) {
         // Алгоритм Денге: targetGyro = (0 - lpf_angle) * P
         // StableHeightAdjust.X = StableHeightAdjust.X - I * (targetGyro - gyro)
-        float targetGyroY = (0.0f - poseData.roll) * stabRollPGain;
-        newStabRoll = currentStabRoll - stabRollIGain * (targetGyroY - lpfGyroY);
+        float targetGyroY = (0.0f - poseData.roll) * pidRoll.P;
+        newStabRoll = currentStabRoll - pidRoll.I * (targetGyroY - lpfGyroY);
         newStabRoll = _constrain(newStabRoll, -rollLimit, rollLimit);
 
-        float targetGyroX = (0.0f - poseData.pitch) * stabPitchPGain;
-        newStabPitch = currentStabPitch - stabPitchIGain * (targetGyroX - lpfGyroX);
+        float targetGyroX = (0.0f - poseData.pitch) * pidPitch.P;
+        newStabPitch = currentStabPitch - pidPitch.I * (targetGyroX - lpfGyroX);
         newStabPitch = _constrain(newStabPitch, -25.0f, 25.0f);
     }
 

@@ -85,11 +85,6 @@ private:
     float lpfGyroX;
     float lpfGyroY;
 
-    // Коэффициенты стабилизации (по примеру Денге)
-    float stabPitchPGain;
-    float stabPitchIGain;
-    float stabRollPGain;
-    float stabRollIGain;
     float pitchZero;
     float rollZero;
     bool baselineInitialized;

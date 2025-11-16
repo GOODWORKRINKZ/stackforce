@@ -59,7 +59,7 @@
 #define ROBOTMODE_CALIBRATION 2
 
 // Ограничения высоты (мм)
-#define ROBOT_HIGHEST 130
+#define ROBOT_HIGHEST 150
 #define ROBOT_LOWEST_FOR_MOT 70
 #define ROBOT_LOWEST_FOR_CAL 70
 
