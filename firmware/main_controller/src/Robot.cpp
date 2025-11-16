@@ -61,7 +61,7 @@ Robot::Robot()
       kpX(1.1),
       kpRoll(0.05),
       turnKp(0.1),
-    rollLimit(35),
+    rollLimit(50),
     legDistance(100),
     lowestHeight(ROBOT_LOWEST_FOR_MOT),
     highestHeight(ROBOT_HIGHEST),
@@ -112,10 +112,27 @@ void Robot::init() {
     servos.setPluseRange(500, 2500);
     Serial.println("[ROBOT] Серво инициализированы");
     delay(100);
-    // IMU
+    
+    // Инициализация ног
+    legFL.init();
+    legFR.init();
+    legBL.init();
+    legBR.init();
+    Serial.println("[ROBOT] Ноги инициализированы");
+    
+    // Установка ног в минимальную высоту перед калибровкой IMU
+    Serial.println("[ROBOT] Установка ног в минимальную позицию для калибровки...");
+    moveAllLegsTo(0, lowestHeight);
+    delay(1000);  // Даем время сервоприводам установиться
+    Serial.println("[ROBOT] Ноги установлены, робот стабилен");
+    
+    // IMU - калибровка после установки ног
     imu.init();
+    Serial.println("[ROBOT] IMU инициализирован, начинается калибровка гироскопа...");
+    Serial.println("[ROBOT] Не двигайте робота!");
+    delay(500);
     imu.calGyroOffsets();
-    Serial.println("[ROBOT] IMU инициализирован");
+    Serial.println("[ROBOT] Калибровка гироскопа завершена");
 
     // SBUS приемник (библиотека от Денге)
     sbusRx.Begin(SBUSPIN, -1);  // RX пин, TX не используется
@@ -125,15 +142,6 @@ void Robot::init() {
     Serial2.begin(115200, SERIAL_8N1, 17, 18);
     motors.init();
     Serial.println("[ROBOT] BLDC моторы инициализированы");
-    
-    
-    
-    // Инициализация ног
-    legFL.init();
-    legFR.init();
-    legBL.init();
-    legBR.init();
-    Serial.println("[ROBOT] Ноги инициализированы");
     
     // CAN
     setupCAN();
@@ -319,13 +327,13 @@ void Robot::updateStabilization(const robotposeparam& poseData) {
     }
 
     // Мёртвая зона для устранения дребезга (deadband)
-    const float PITCH_DEADBAND = 2.5f;  // градусы
-    const float ROLL_DEADBAND = 2.5f;   // градусы
+    const float PITCH_DEADBAND = 3.5f;  // градусы
+    const float ROLL_DEADBAND = 3.5f;   // градусы
 
     // Используем полноценный PID регулятор
     // Ошибка = текущий угол (цель = 0, удержание горизонта)
-    float pitchError = -poseData.pitch;  // Инвертируем для правильного направления коррекции
-    float rollError = -poseData.roll;
+    float pitchError = -poseData.pitch/2.0;
+    float rollError = -poseData.roll/2.0;
 
     // Применяем deadband - если отклонение меньше порога, считаем его нулевым
     if (abs(pitchError) < PITCH_DEADBAND) {
@@ -344,7 +352,7 @@ void Robot::updateStabilization(const robotposeparam& poseData) {
     rawStabRoll = _constrain(rawStabRoll, -rollLimit, rollLimit);
 
     // Применяем LPF для сглаживания выхода PID (убирает резкие рывки)
-    const float PID_FILTER_ALPHA = 0.03f;  // Коэффициент фильтра (0.15 = плавно)
+    const float PID_FILTER_ALPHA = 0.03f;  // Оптимальное значение
     lpfStabPitch = lpfStabPitch * (1.0f - PID_FILTER_ALPHA) + rawStabPitch * PID_FILTER_ALPHA;
     lpfStabRoll = lpfStabRoll * (1.0f - PID_FILTER_ALPHA) + rawStabRoll * PID_FILTER_ALPHA;
 
