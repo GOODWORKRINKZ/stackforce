@@ -98,10 +98,33 @@ bool Leg::calculateIK(float x, float y, float& alphaOut, float& betaOut) {
  * @brief Переместить ногу в указанную позицию
  */
 bool Leg::moveTo(float x, float y) {
+    constexpr float kLogThreshold = 0.5f;  // avoid spamming logs on tiny corrections
+    const float prevX = currentX;
+    const float prevY = currentY;
+    const bool targetChanged = (fabsf(x - prevX) > kLogThreshold) || (fabsf(y - prevY) > kLogThreshold);
+
+    float targetX = x;
+    float targetY = y;
+    const bool isFrontLeg = (position == LegPosition::FRONT_LEFT || position == LegPosition::FRONT_RIGHT);
+    if (isFrontLeg) {
+        targetY = (ROBOT_LOWEST_FOR_MOT + ROBOT_HIGHEST) - targetY;
+    }
+    targetY = _constrain(targetY, ROBOT_LOWEST_FOR_MOT, ROBOT_HIGHEST);
+
+    if (targetChanged) {
+        if (isFrontLeg) {
+            Serial.printf("[LEG][%d] target -> X=%.1f Y=%.1f (adjY=%.1f) (prev X=%.1f Y=%.1f)\n",
+                          static_cast<int>(position), x, y, targetY, prevX, prevY);
+        } else {
+            Serial.printf("[LEG][%d] target -> X=%.1f Y=%.1f (prev X=%.1f Y=%.1f)\n",
+                          static_cast<int>(position), x, y, prevX, prevY);
+        }
+    }
+
     float alpha, beta;
     
     // Вычислить обратную кинематику
-    if (!calculateIK(x, y, alpha, beta)) {
+    if (!calculateIK(targetX, targetY, alpha, beta)) {
         Serial.printf("[LEG] Ошибка IK для ноги %d: X=%.1f Y=%.1f\n", (int)position, x, y);
         return false;
     }
@@ -130,6 +153,17 @@ bool Leg::moveTo(float x, float y) {
     // Сохранение текущей позиции
     currentX = x;
     currentY = y;
+
+    if (targetChanged) {
+        Serial.printf("[LEG][%d] IK alpha=%.1fdeg beta=%.1fdeg | servoF(ch%d)=%d servoR(ch%d)=%d\n",
+                      static_cast<int>(position),
+                      (alpha / (2 * PI)) * 360.0f,
+                      (beta / (2 * PI)) * 360.0f,
+                      servoFrontChannel,
+                      servoFrontAngle + servoFrontOffset,
+                      servoRearChannel,
+                      servoRearAngle + servoRearOffset);
+    }
     
     return true;
 }
