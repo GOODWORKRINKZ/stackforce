@@ -65,13 +65,13 @@ Robot::Robot()
     legDistance(100),
     lowestHeight(ROBOT_LOWEST_FOR_MOT),
     highestHeight(ROBOT_HIGHEST),
-    imuFilterAlpha(0.03f),
+    imuFilterAlpha(0.15f),  // Увеличено с 0.03 из-за уменьшения частоты IMU до 200Hz
     lpfPitch(0.0f),
     lpfRoll(0.0f),
     lpfGyroX(0.0f),
     lpfGyroY(0.0f),
-    kalmanPitch(0.001f, 0.15f, 1.0f),
-    kalmanRoll(0.001f, 0.15f, 1.0f),
+    kalmanPitch(0.005f, 0.15f, 1.0f),  // Q увеличен для 200Hz
+    kalmanRoll(0.005f, 0.15f, 1.0f),
     lastKalmanUpdate(0),
     pitchZero(0.0f),
     rollZero(0.0f),
@@ -497,8 +497,16 @@ void Robot::controlTaskEntry(void* arg) {
     vTaskDelete(nullptr);
 }
 
+/**
+ * @brief IMU Task Loop
+ * Частота: 200 Hz (5ms период)
+ * - Читает данные IMU
+ * - Применяет фильтр Калмана
+ * - Обновляет PID стабилизации
+ * Частота выбрана по теореме Найквиста: 2x от частоты управления (100Hz)
+ */
 void Robot::imuTaskLoop() {
-    const TickType_t delayTicks = pdMS_TO_TICKS(1);
+    const TickType_t delayTicks = pdMS_TO_TICKS(5);  // 200 Hz (был 1000 Hz)
     while (true) {
         robotposeparam latestPose = readIMU();
         updateStabilization(latestPose);
@@ -506,8 +514,16 @@ void Robot::imuTaskLoop() {
     }
 }
 
+/**
+ * @brief Control Task Loop  
+ * Частота: 100 Hz (10ms период)
+ * - Обновляет походку
+ * - Управляет моторами
+ * - Отправляет команды сервоприводам
+ * Частота оптимальна для сервоприводов (50-100 Hz типичный диапазон)
+ */
 void Robot::controlTaskLoop() {
-    const TickType_t delayTicks = pdMS_TO_TICKS(5);
+    const TickType_t delayTicks = pdMS_TO_TICKS(10);  // 100 Hz - оптимально для серво
     while (true) {
         update();
         vTaskDelay(delayTicks);
