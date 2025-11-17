@@ -106,6 +106,12 @@ GaitTargets StandGait::update(const GaitParams& params) {
         pitchComp = params.pitch;
     }
     
+    // Добавляем крен во время поворота (как мотоцикл в повороте)
+    // Максимальный крен 10° при полном повороте
+    const float MAX_TURN_LEAN = 10.0f * 1.78f;  // градусы * коэффициент усиления
+    float turnLean = params.turn * MAX_TURN_LEAN;
+    rollComp += turnLean;
+    
     applyBodyCompensation(targets, pitchComp, rollComp);
 
     targets.frontLeft.y  = constrainValue(targets.frontLeft.y, 70, 150);
@@ -168,6 +174,12 @@ GaitTargets TrotGait::update(const GaitParams& params) {
     
     float rollComp = params.stabRoll + params.roll * 0.2f;
     float pitchComp = params.stabPitch + params.pitch * 0.2f;
+    
+    // Добавляем крен во время поворота (как мотоцикл)
+    const float MAX_TURN_LEAN = 8.0f * 1.78f;  // 8° при полном повороте * коэф. усиления
+    float turnLean = params.turn * MAX_TURN_LEAN;
+    rollComp += turnLean;
+    
     applyBodyCompensation(targets, pitchComp, rollComp);
     
     return targets;
@@ -231,6 +243,12 @@ GaitTargets WalkGait::update(const GaitParams& params) {
     
     float rollComp = params.stabRoll + params.roll * 0.25f;
     float pitchComp = params.stabPitch + params.pitch * 0.25f;
+    
+    // Крен во время поворота для походки Walk
+    const float MAX_TURN_LEAN = 8.0f * 1.78f;
+    float turnLean = params.turn * MAX_TURN_LEAN;
+    rollComp += turnLean;
+    
     applyBodyCompensation(targets, pitchComp, rollComp);
     
     return targets;
@@ -341,6 +359,12 @@ GaitTargets CrawlGait::update(const GaitParams& params) {
     
     float rollComp = params.stabRoll + params.roll * 0.3f;
     float pitchComp = params.stabPitch + params.pitch * 0.3f;
+    
+    // Крен во время поворота для Crawl
+    const float MAX_TURN_LEAN = 8.0f * 1.78f;
+    float turnLean = params.turn * MAX_TURN_LEAN;
+    rollComp += turnLean;
+    
     applyBodyCompensation(targets, pitchComp, rollComp);
     
     return targets;
