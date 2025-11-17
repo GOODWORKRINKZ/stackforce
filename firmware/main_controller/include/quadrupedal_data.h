@@ -16,6 +16,18 @@
 #define CAN_ID_MAIN_TO_AUX 0x100  // ID сообщений от main к aux
 #define CAN_ID_AUX_TO_MAIN 0x101  // ID сообщений от aux к main
 
+// ==================== БУЗЕР ====================
+#define BUZZER_PIN 9              // Пассивный бузер на GPIO9
+#define BUZZER_PWM_CHANNEL 0      // PWM канал для бузера
+
+// Команды бузера через CAN (для синхронизации двух бузеров)
+#define BUZZER_CMD_NONE 0
+#define BUZZER_CMD_BARK_SINGLE 1
+#define BUZZER_CMD_BARK_DOUBLE 2
+#define BUZZER_CMD_BARK_ANGRY 3
+#define BUZZER_CMD_SUCCESS 4
+#define BUZZER_CMD_ERROR 5
+
 // Калибровка каналов SBUS (протокол SBUS: 172-1811, центр 992)
 #define RCCHANNEL_MIN 172
 #define RCCHANNEL_MAX 1811

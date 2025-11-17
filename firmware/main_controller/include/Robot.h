@@ -15,6 +15,7 @@
 #include "pid.h"
 #include "sbus.h"
 #include "KalmanFilter.h"
+#include "Buzzer.h"
 #include "quadrupedal_data.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -30,6 +31,7 @@ private:
     SF_IMU imu;                         // MPU6050 IMU
     SF_BLDC motors;                     // BLDC моторы
     bfs::SbusRx sbusRx;                 // SBUS приемник
+    Buzzer buzzer;                      // Пассивный бузер на GPIO9
     
     // Ноги
     Leg legFL;                          // Передняя левая нога
@@ -68,6 +70,10 @@ private:
     float targetSpeed;                  // Целевая скорость
     float stabRoll, stabPitch;          // Накопленная коррекция
     float lpfStabRoll, lpfStabPitch;    // Отфильтрованная коррекция PID
+    
+    // Команды моторов (для передачи в aux через CAN)
+    float lastLeftCmd;                  // Последняя команда левых моторов
+    float lastRightCmd;                 // Последняя команда правых моторов
     
     // Параметры управления
     float kpY;                          // Коэффициент для плавного изменения высоты
@@ -203,6 +209,18 @@ public:
      * @brief Получить данные движения
      */
     const robotmotionparam& getMotion() const { return motion; }
+    
+    /**
+     * @brief Воспроизвести звук на бузере
+     * @param sound Тип звука из BuzzerSound
+     * @param sendToAux Отправить команду и на aux контроллер (дуэт)
+     */
+    void playSound(BuzzerSound sound, bool sendToAux = false);
+    
+    /**
+     * @brief Обновить бузер (вызывается автоматически в update)
+     */
+    void updateBuzzer() { buzzer.update(); }
 
 private:
     TaskHandle_t imuTaskHandle;

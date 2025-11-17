@@ -18,6 +18,17 @@ class ServoCalibrationGUI:
         
         self.serial_port = None  # Инициализация атрибута serial_port
         self.offsets = [-35, -162, -150, -15, -74, -147, -108, -23]  # Откалиброваны в IK режиме
+        self.manual_enabled = tk.BooleanVar(value=False)
+        self.manual_leg_vars = {}
+        self.manual_event_block = False
+        self.manual_x_range = (-60.0, 60.0)
+        self.manual_y_range = (70.0, 150.0)
+        self.leg_labels = {
+            "fl": "Front Left",
+            "fr": "Front Right",
+            "bl": "Back Left",
+            "br": "Back Right"
+        }
         
         # Названия серво
         # ВНИМАНИЕ: Робот повернут на 180° относительно гироскопа
@@ -102,6 +113,8 @@ class ServoCalibrationGUI:
         self.y_var = tk.DoubleVar(value=115.0)
         ttk.Entry(ik_frame, textvariable=self.y_var, width=8).pack(side="left", padx=5)
         ttk.Button(ik_frame, text="Установить Y", command=self.set_y).pack(side="left", padx=5)
+
+        self.build_manual_section()
         
         # === СОХРАНЕНИЕ ===
         save_frame = ttk.LabelFrame(self.root, text="Сохранение", padding=10)
@@ -125,6 +138,49 @@ class ServoCalibrationGUI:
         
         # Обновить список портов при старте
         self.refresh_ports()
+
+    def build_manual_section(self):
+        manual_frame = ttk.LabelFrame(self.root, text="Ручное тестирование ног (stab off + manual on)", padding=10)
+        manual_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        ttk.Label(manual_frame, text="1) На контроллере: 'stab off', затем 'manual on'.\n2) Используйте слайдеры, чтобы задать X/Y каждой ноги.").pack(anchor="w", pady=(0, 8))
+
+        btn_frame = ttk.Frame(manual_frame)
+        btn_frame.pack(fill="x", pady=(0, 10))
+        ttk.Button(btn_frame, text="Manual ON", command=lambda: self.set_manual_mode(True)).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Manual OFF", command=lambda: self.set_manual_mode(False)).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Сбросить цели", command=self.reset_manual_targets).pack(side="left", padx=5)
+        self.manual_status = ttk.Label(btn_frame, text="Manual: OFF", foreground="red")
+        self.manual_status.pack(side="left", padx=10)
+
+        grid = ttk.Frame(manual_frame)
+        grid.pack(fill="both", expand=True)
+
+        legs = [("fl", "Передняя левая"), ("fr", "Передняя правая"), ("bl", "Задняя левая"), ("br", "Задняя правая")]
+        for idx, (leg_key, leg_title) in enumerate(legs):
+            card = ttk.LabelFrame(grid, text=leg_title, padding=8)
+            card.grid(row=idx // 2, column=idx % 2, sticky="nsew", padx=5, pady=5)
+            grid.grid_columnconfigure(idx % 2, weight=1)
+
+            x_var = tk.DoubleVar(value=0.0)
+            y_var = tk.DoubleVar(value=110.0)
+            self.manual_leg_vars[leg_key] = {"x": x_var, "y": y_var}
+
+            ttk.Label(card, text="X (мм)").pack(anchor="w")
+            tk.Scale(card, from_=self.manual_x_range[0], to=self.manual_x_range[1], orient="horizontal",
+                     resolution=0.5, variable=x_var,
+                     command=lambda _v, leg=leg_key: self.on_manual_slider(leg)).pack(fill="x")
+            x_entry = ttk.Entry(card, textvariable=x_var, width=7)
+            x_entry.pack(pady=(2, 6))
+            x_entry.bind("<Return>", lambda _e, leg=leg_key: self.on_manual_entry(leg))
+
+            ttk.Label(card, text="Y (мм)").pack(anchor="w")
+            tk.Scale(card, from_=self.manual_y_range[0], to=self.manual_y_range[1], orient="horizontal",
+                     resolution=0.5, variable=y_var,
+                     command=lambda _v, leg=leg_key: self.on_manual_slider(leg)).pack(fill="x")
+            y_entry = ttk.Entry(card, textvariable=y_var, width=7)
+            y_entry.pack(pady=(2, 0))
+            y_entry.bind("<Return>", lambda _e, leg=leg_key: self.on_manual_entry(leg))
     
     def log(self, message):
         """Добавить сообщение в лог"""
@@ -264,6 +320,51 @@ class ServoCalibrationGUI:
         """Установка Y координаты в IK режиме"""
         y_value = self.y_var.get()
         self.send_command(f"y {y_value}")
+
+    def set_manual_mode(self, enabled: bool):
+        cmd = "manual on" if enabled else "manual off"
+        if self.send_command(cmd):
+            self.manual_enabled.set(enabled)
+            status = "ON" if enabled else "OFF"
+            color = "green" if enabled else "red"
+            self.manual_status.config(text=f"Manual: {status}", foreground=color)
+
+    def reset_manual_targets(self):
+        self.manual_event_block = True
+        for leg_vars in self.manual_leg_vars.values():
+            leg_vars["x"].set(0.0)
+            leg_vars["y"].set(110.0)
+        self.manual_event_block = False
+        self.send_command("manual reset")
+
+    def on_manual_slider(self, leg_key: str):
+        if self.manual_event_block:
+            return
+        self.apply_manual_limits(leg_key)
+        self.send_leg_target(leg_key)
+
+    def on_manual_entry(self, leg_key: str):
+        if self.manual_event_block:
+            return
+        self.apply_manual_limits(leg_key)
+        self.send_leg_target(leg_key)
+
+    def apply_manual_limits(self, leg_key: str):
+        for axis, limits in (("x", self.manual_x_range), ("y", self.manual_y_range)):
+            value = self.manual_leg_vars[leg_key][axis].get()
+            clamped = max(limits[0], min(limits[1], value))
+            if clamped != value:
+                self.manual_event_block = True
+                self.manual_leg_vars[leg_key][axis].set(clamped)
+                self.manual_event_block = False
+
+    def send_leg_target(self, leg_key: str):
+        if not self.manual_enabled.get():
+            self.log("Manual режим выключен. Нажмите Manual ON перед движением ног.")
+            return
+        x_value = self.manual_leg_vars[leg_key]["x"].get()
+        y_value = self.manual_leg_vars[leg_key]["y"].get()
+        self.send_command(f"move {leg_key} {x_value:.1f} {y_value:.1f}")
     
     def request_offsets(self):
         """Запросить текущие офсеты с робота"""

@@ -38,6 +38,7 @@ Robot::Robot()
       imu(Wire),
       motors(Serial2),
       sbusRx(&Serial1),
+      buzzer(BUZZER_PIN, BUZZER_PWM_CHANNEL),
       legFL(LegPosition::FRONT_LEFT, &servos),
       legFR(LegPosition::FRONT_RIGHT, &servos),
       legBL(LegPosition::BACK_LEFT, &servos),
@@ -57,6 +58,8 @@ Robot::Robot()
       stabPitch(0),
       lpfStabRoll(0),
       lpfStabPitch(0),
+      lastLeftCmd(0),
+      lastRightCmd(0),
       kpY(0.1),
       kpX(1.1),
       kpRoll(0.05),
@@ -140,8 +143,17 @@ void Robot::init() {
     
     // BLDC моторы
     Serial2.begin(115200, SERIAL_8N1, 17, 18);
+    Serial.println("[ROBOT] Serial2 UART инициализирован (RX=17, TX=18, 115200)");
+    
     motors.init();
-    Serial.println("[ROBOT] BLDC моторы инициализированы");
+    Serial.println("[ROBOT] SF_BLDC motors.init() вызван");
+    
+    motors.setModes(4, 4);  // Режим 4 = velocity control (КРИТИЧНО!)
+    Serial.println("[ROBOT] BLDC моторы установлены в режим velocity (4,4)");
+    
+    // Бузер
+    buzzer.begin();
+    Serial.println("[ROBOT] Бузер инициализирован");
     
     // CAN
     setupCAN();
@@ -155,6 +167,9 @@ void Robot::init() {
     motion.lowest = lowestHeight;
     
     Serial.println("[ROBOT] Инициализация завершена");
+    
+    // Приветственный звук
+    buzzer.play(SOUND_STARTUP);
 }
 
 /**
@@ -235,6 +250,13 @@ void Robot::readRC() {
             Serial.printf("[ROBOT] Моторы %s (ARM CH5 = %d)\n", 
                           motorsEnabled ? "ВКЛЮЧЕНЫ" : "ВЫКЛЮЧЕНЫ",
                           rcValues[RC_CH_ARM]);
+            
+            // Звуковой сигнал при ARM
+            if (motorsEnabled) {
+                playSound(SOUND_BARK_DOUBLE, true);  // Двойное гавканье с дуэтом!
+            } else {
+                buzzer.play(SOUND_BEEP_SHORT);  // Короткий писк при выключении
+            }
         }
         
         // STAB канал (CH8) - включение/выключение стабилизации
@@ -244,6 +266,9 @@ void Robot::readRC() {
             Serial.printf("[ROBOT] Стабилизация %s (STAB CH8 = %d)\n",
                           stabilizationEnabled ? "ВКЛЮЧЕНА" : "ВЫКЛЮЧЕНА",
                           rcValues[RC_CH_STAB]);
+            
+            // Звук при переключении стабилизации
+            buzzer.play(stabilizationEnabled ? SOUND_SUCCESS : SOUND_BEEP_SHORT);
         }
     }
 }
@@ -389,8 +414,37 @@ void Robot::updateMotors() {
     leftSpeed = _constrain(leftSpeed, -1.0, 1.0);
     rightSpeed = _constrain(rightSpeed, -1.0, 1.0);
     
-    // Отправка команд моторам
-    motors.setTargets(m0Dir * leftSpeed * 100, m1Dir * rightSpeed * 100);
+    // Вычисление команд для моторов (умножаем на 200 для более широкого диапазона)
+    float leftCmd = m0Dir * leftSpeed * 200;
+    float rightCmd = m1Dir * rightSpeed * 200;
+    
+    // Применяем deadband - минимальная команда для старта мотора
+    const float MOTOR_DEADBAND = 250.0;  // Минимальная команда для FOC моторов
+    if (abs(leftCmd) > 0.1 && abs(leftCmd) < MOTOR_DEADBAND) {
+        leftCmd = (leftCmd > 0) ? MOTOR_DEADBAND : -MOTOR_DEADBAND;
+    }
+    if (abs(rightCmd) > 0.1 && abs(rightCmd) < MOTOR_DEADBAND) {
+        rightCmd = (rightCmd > 0) ? MOTOR_DEADBAND : -MOTOR_DEADBAND;
+    }
+    
+    // DEBUG: Вывод команд моторам каждые 500мс
+    static unsigned long lastMotorDebug = 0;
+    if (millis() - lastMotorDebug > 500) {
+        Serial.printf("[MOTOR] CH1=%d CH3=%d | fwd=%.2f turn=%.2f | L=%.1f R=%.1f | M0cmd=%.1f M1cmd=%.1f | Vel: M0=%.1f M1=%.1f\n",
+                      rcValues[RC_CH_FORWARD], rcValues[RC_CH_TURN],
+                      forward, turn,
+                      leftSpeed, rightSpeed,
+                      leftCmd, rightCmd,
+                      bldcData.M0_Vel, bldcData.M1_Vel);
+        lastMotorDebug = millis();
+    }
+    
+    // Сохраняем команды для отправки в aux через CAN
+    lastLeftCmd = leftCmd;
+    lastRightCmd = rightCmd;
+    
+    // Отправка команд моторам (без дополнительного множителя - уже *= 200)
+    motors.setTargets(leftCmd, rightCmd);
     
     // Получение телеметрии от моторов
     bldcData = motors.getBLDCData();
@@ -424,26 +478,48 @@ void Robot::resetStabilizationBaseline() {
  * @brief Инициализация CAN шины
  */
 void Robot::setupCAN() {
+    Serial.printf("[ROBOT] Инициализация CAN интерфейса (TX=%d, RX=%d)...\n", CAN_TX_PIN, CAN_RX_PIN);
+    
+    // Настройка TWAI (CAN) для ESP32
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(
         (gpio_num_t)CAN_TX_PIN, 
         (gpio_num_t)CAN_RX_PIN, 
         TWAI_MODE_NORMAL
     );
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
+    
+    // Увеличиваем размер очередей для стабильности
+    g_config.tx_queue_len = 10;
+    g_config.rx_queue_len = 10;
+    
+    // 500 kbps - более надежная скорость для CAN (SN65HVD230 поддерживает до 1Mbps)
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+    
+    // Принимаем все CAN ID (без фильтрации)
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
     
-    if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
-        Serial.println("[ROBOT] TWAI driver установлен");
+    // Установка драйвера
+    esp_err_t install_result = twai_driver_install(&g_config, &t_config, &f_config);
+    if (install_result == ESP_OK) {
+        Serial.println("[ROBOT] ✓ TWAI driver установлен успешно");
     } else {
-        Serial.println("[ROBOT] ОШИБКА: Не удалось установить TWAI driver");
+        Serial.printf("[ROBOT] ✗ ОШИБКА установки TWAI driver: 0x%X\n", install_result);
         return;
     }
     
-    if (twai_start() == ESP_OK) {
-        Serial.println("[ROBOT] TWAI запущен (1 Mbps)");
+    // Запуск CAN интерфейса
+    esp_err_t start_result = twai_start();
+    if (start_result == ESP_OK) {
+        Serial.println("[ROBOT] ✓ TWAI запущен (500 kbps, SN65HVD230 transceiver)");
         twaiInstalled = true;
+        
+        // Проверка состояния CAN после старта
+        twai_status_info_t status;
+        if (twai_get_status_info(&status) == ESP_OK) {
+            Serial.printf("[ROBOT] CAN статус: state=%d, tx_queue=%d, rx_queue=%d\n",
+                          status.state, status.msgs_to_tx, status.msgs_to_rx);
+        }
     } else {
-        Serial.println("[ROBOT] ОШИБКА: Не удалось запустить TWAI");
+        Serial.printf("[ROBOT] ✗ ОШИБКА запуска TWAI: 0x%X\n", start_result);
     }
 }
 
@@ -545,25 +621,60 @@ void Robot::sendToAux() {
     if (!twaiInstalled) return;
     
     static unsigned long lastSend = 0;
-    if (millis() - lastSend < 20) return;  // 50 Hz
+    static unsigned long lastDebug = 0;
     
+    if (millis() - lastSend < 100) return;  // 10 Hz (каждые 100мс)
+    
+    // Подготовка CAN сообщения
     twai_message_t tx_msg;
     tx_msg.identifier = CAN_ID_MAIN_TO_AUX;
     tx_msg.data_length_code = 8;
-    tx_msg.flags = TWAI_MSG_FLAG_NONE;
+    tx_msg.flags = TWAI_MSG_FLAG_NONE;  // Стандартный формат CAN 2.0B
     
-    // Упаковка данных (пример: режим, команды моторов задних колес)
+    // Упаковка данных для aux контроллера (задние моторы M2, M3)
+    // M2/M3 получают ТЕ ЖЕ команды что M0/M1 для 4WD режима
+    int16_t motor2Cmd = (int16_t)lastRightCmd;   // M2 = копия M0 (левые)
+    int16_t motor3Cmd = (int16_t)lastLeftCmd;  // M3 = копия M1 (правые)
+    
     tx_msg.data[0] = motion.mode;
-    tx_msg.data[1] = 0;  // Резерв для будущих данных
-    tx_msg.data[2] = 0;
-    tx_msg.data[3] = 0;
-    tx_msg.data[4] = 0;
-    tx_msg.data[5] = 0;
-    tx_msg.data[6] = 0;
-    tx_msg.data[7] = 0;
+    tx_msg.data[1] = (motor2Cmd >> 8) & 0xFF;  // High byte
+    tx_msg.data[2] = motor2Cmd & 0xFF;         // Low byte
+    tx_msg.data[3] = (motor3Cmd >> 8) & 0xFF;
+    tx_msg.data[4] = motor3Cmd & 0xFF;
+    tx_msg.data[5] = motorsEnabled ? 1 : 0;    // Флаг ARM
+    tx_msg.data[6] = 0;  // Резерв
+    tx_msg.data[7] = 0;  // Резерв
     
-    if (twai_transmit(&tx_msg, pdMS_TO_TICKS(10)) == ESP_OK) {
-        // Успешно отправлено
+    // Отправка с таймаутом 10мс
+    esp_err_t result = twai_transmit(&tx_msg, pdMS_TO_TICKS(10));
+    
+    // Диагностика ошибок CAN каждые 2 секунды
+    if (millis() - lastDebug > 2000) {
+        if (result == ESP_OK) {
+            Serial.println("[CAN] ✓ Передача в aux контроллер работает");
+        } else if (result == ESP_ERR_TIMEOUT) {
+            Serial.println("[CAN] ✗ TIMEOUT: TX очередь переполнена");
+        } else if (result == ESP_FAIL) {
+            Serial.println("[CAN] ✗ FAIL: TX ошибка (проверьте подключение CAN шины)");
+            
+            // Диагностика состояния CAN
+            twai_status_info_t status;
+            if (twai_get_status_info(&status) == ESP_OK) {
+                Serial.printf("[CAN] Статус: state=%d, tx_err=%d, rx_err=%d, tx_failed=%d, arb_lost=%d\n",
+                              status.state, status.tx_error_counter, status.rx_error_counter,
+                              status.tx_failed_count, status.arb_lost_count);
+                
+                // Если CAN в BUS-OFF состоянии - переинициализируем
+                if (status.state == TWAI_STATE_BUS_OFF) {
+                    Serial.println("[CAN] ⚠ BUS-OFF detected! Попытка восстановления...");
+                    twai_initiate_recovery();
+                }
+            }
+        } else {
+            Serial.printf("[CAN] ✗ Неизвестная ошибка: 0x%X\n", result);
+        }
+        
+        lastDebug = millis();
     }
     
     lastSend = millis();
@@ -586,6 +697,12 @@ void Robot::update() {
     
     // Обновление моторов
     updateMotors();
+    
+    // Отправка команд aux контроллеру по CAN
+    sendToAux();
+    
+    // Обновление бузера
+    buzzer.update();
     
     // Обновление позиций ног с использованием походки
     if (ikEnabled && currentGait) {
@@ -651,4 +768,28 @@ void Robot::moveAllLegsTo(float x, float y) {
     legFR.moveTo(x, y);
     legBL.moveTo(x, y);
     legBR.moveTo(x, y);
+}
+
+/**
+ * @brief Воспроизвести звук на бузере
+ * @param sound Тип звука
+ * @param sendToAux Отправить команду и на aux контроллер для дуэта
+ */
+void Robot::playSound(BuzzerSound sound, bool sendToAux) {
+    // Проигрываем на main контроллере
+    buzzer.play(sound);
+    
+    // Если нужен дуэт - отправляем команду через CAN
+    if (sendToAux && twaiInstalled) {
+        twai_message_t tx_msg;
+        tx_msg.identifier = CAN_ID_MAIN_TO_AUX;
+        tx_msg.data_length_code = 2;
+        tx_msg.flags = TWAI_MSG_FLAG_NONE;
+        
+        // Формат: [команда=0xFF (спецкоманда), звук]
+        tx_msg.data[0] = 0xFF;  // Маркер команды бузера
+        tx_msg.data[1] = (uint8_t)sound;
+        
+        twai_transmit(&tx_msg, pdMS_TO_TICKS(5));
+    }
 }
