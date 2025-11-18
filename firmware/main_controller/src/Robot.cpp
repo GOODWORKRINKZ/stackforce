@@ -270,6 +270,63 @@ void Robot::readRC() {
             // Звук при переключении стабилизации
             buzzer.play(stabilizationEnabled ? SOUND_SUCCESS : SOUND_BEEP_SHORT);
         }
+        
+        // Переключение походок через CH6 (MODE1) и CH7 (MODE2)
+        // CH6: основной режим (статика/медленно/быстро)
+        // CH7: вариант внутри режима
+        static int lastMode1 = -1;
+        static int lastMode2 = -1;
+        
+        // Определение позиции 3-позиционного переключателя
+        // SBUS: <600=низ, 600-1400=центр, >1400=верх
+        int mode1 = (rcValues[RC_CH_MODE1] < 600) ? 0 : (rcValues[RC_CH_MODE1] > 1400) ? 2 : 1;
+        int mode2 = (rcValues[RC_CH_MODE2] < 600) ? 0 : (rcValues[RC_CH_MODE2] > 1400) ? 2 : 1;
+        
+        if (mode1 != lastMode1 || mode2 != lastMode2) {
+            lastMode1 = mode1;
+            lastMode2 = mode2;
+            
+            String gaitName = "stand";
+            
+            // Матрица походок 3x3
+            if (mode1 == 0) {  // Статичные стойки
+                if (mode2 == 0) {
+                    gaitName = "stand";
+                    motion.lowest = 70;
+                    motion.highest = 100;
+                } else if (mode2 == 1) {
+                    gaitName = "stand";
+                    motion.lowest = 60;   // Низкая стойка
+                    motion.highest = 80;
+                } else {
+                    gaitName = "stand";
+                    motion.lowest = 90;   // Высокая стойка
+                    motion.highest = 130;
+                }
+            } else if (mode1 == 1) {  // Медленные походки
+                if (mode2 == 0) {
+                    gaitName = "walk";
+                } else if (mode2 == 1) {
+                    gaitName = "crawl";
+                } else {
+                    gaitName = "trot";  // Медленная рысь (можно настроить параметры)
+                }
+            } else {  // Быстрые походки
+                if (mode2 == 0) {
+                    gaitName = "trot";
+                } else if (mode2 == 1) {
+                    gaitName = "bound";
+                } else {
+                    gaitName = "trot";  // Галоп (пока дублируем trot, можно добавить свою)
+                }
+            }
+            
+            setGait(gaitName);
+            buzzer.play(SOUND_BEEP_SHORT);  // Короткий сигнал при смене походки
+            
+            Serial.printf("[ROBOT] Походка: %s (CH6=%d CH7=%d, mode1=%d mode2=%d)\n",
+                          gaitName.c_str(), rcValues[RC_CH_MODE1], rcValues[RC_CH_MODE2], mode1, mode2);
+        }
     }
 }
 
