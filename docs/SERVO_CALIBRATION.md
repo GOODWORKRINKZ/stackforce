@@ -172,7 +172,7 @@ GND ──► Общий GND с ESP32
 
 ## Документация
 
-- [firmware/servo_calibration/README.md](../firmware/servo_calibration/README.md) - Подробная инструкция по использованию
+- [README_CALIBRATION.md](README_CALIBRATION.md) - Подробная инструкция по использованию
 - [README.md](../README.md) - Обновлен с информацией о калибровке
 
 ## Следующие шаги
